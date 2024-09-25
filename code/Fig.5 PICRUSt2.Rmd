@@ -1,0 +1,364 @@
+---
+title: "Fig.5 PICRUSt2"
+author: "Huanhuan Zhu"
+date: "2024-09-25"
+output: html_document
+---
+
+```{r,fig.align='center', fig.height=9, fig.width=16}
+#######################################Fig.5 PICRUSt2###########################################
+
+library(ggplot2)
+library(tidyverse)
+library(patchwork)
+library(ggh4x)
+library(reshape2)
+library(pals)
+library(RColorBrewer)
+library(psych)
+library(linkET)
+
+rm(list=ls())
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Bacteria/otu/picrust2/out2/")
+
+# load group information
+group <- read.csv("sample_metadata.csv", header = T)
+#group <- na.omit(group)
+group_MC <- group %>%
+  filter(country == "Uzbekistan", plants=="Maize"|plants=="Cotton")
+group_MC$type <- rep("MC",nrow(group_MC))
+
+group_TS <- group %>%
+  filter(country == "Uzbekistan", plants=="Tamarix chinensis"|plants=="Suaeda")
+group_TS$type <- rep("TS",nrow(group_TS))
+
+group2 <- rbind(group_MC,group_TS)
+names(group2)[1] = "sample_name"
+
+group3 <- na.omit(group)
+group3$cnratio <- group3$tc/group3$tn
+group3$npration <- group3$tn/group3$tp
+group3$cpration <- group3$tc/group3$tp
+group3$napration <- group3$tn/group3$avail_p*1000
+group3$capration <- group3$tc/group3$avail_p*1000
+
+
+# load KEGG htext
+kegg <- read.table("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Bacteria/otu/picrust2/KEGG/kegg htext.txt", 
+                   sep = "\t",fill = TRUE,header = T,quote = "")
+
+# load KO from PICRUSt2
+ko_abundance <- read.table("KO_metagenome_out/pred_metagenome_unstrat.tsv", header = T, check.names = F)
+
+# filter data
+ko_abundance <- ko_abundance[,colnames(ko_abundance) %in% c("function",group2$sample_name)]
+abundance = ko_abundance %>% column_to_rownames("function")  # function as rownames, create new dataframe
+ko_abundance <-ko_abundance[rowSums(abundance) != 0,]  # filter KO occur in at least one sample
+
+# annotate KO using KEGG htext
+ko_abundance2 <- merge(kegg,ko_abundance,by.x = "KO",by.y="function", all.y = T)
+table(duplicated(paste0(ko_abundance2$pathway_id,ko_abundance2$KO)))  # check duplicate
+
+# summarize according to pathway
+ko_abundance3 <- ko_abundance2[,c("pathway_id",group2$sample_name)]  # select certain column
+ko_abundance4 <- aggregate(. ~ pathway_id, data = ko_abundance3, FUN = sum)  # summarize KO according to pathway_id
+
+# add levels to pathway
+ko_abundance5 <- merge(ko_abundance4,kegg[,c("pathway_id","level1","level2","level3")],
+                       by.x="pathway_id",by.y="pathway_id")
+table(duplicated(ko_abundance5$pathway_id))  # check duplicate
+ko_abundance5 <- ko_abundance5[-which(duplicated(ko_abundance5$pathway_id)),]  # delete duplicate pathway(due to one KO belongs to many pathway(KEGG htext), so there are many duplicate pathway in the result)
+
+# remove human diseases and eukaryotes function, remove level1, level3, keep level2
+ko_abundance5 <- ko_abundance5 %>%
+  filter(level1 != "Human Diseases" & level1 != "Organismal Systems"& level2 != "Cellular community - eukaryotes") %>%
+  select(-level1, -level3)  
+
+# summarize, calculate percantage according to level2
+ko_abundance6 <- aggregate(.~level2,ko_abundance5[,2:22],FUN="sum")
+ko_abundance6[, 2:21]  <- apply(ko_abundance6[, 2:21], 2, function(x) x / sum(x))
+
+
+### 1. heatmap for correlation between soil properties and KEGG function at level2
+ko_abundance7 <- column_to_rownames(ko_abundance6,"level2")
+ko_abundance7 <- as.data.frame(t(ko_abundance7))
+
+group3 <- group3[,c(1,9:19)]
+group3 <- column_to_rownames(group3, "sample.id")
+
+group3 <- group3[rownames(ko_abundance7),]
+corr_matrix <- corr.test(ko_abundance7, group3, method = 'spearman') 
+corr_matrix$r  # r matrix
+corr_matrix$p  # p matrix
+
+p4 <- qcorrplot(corr_matrix) +
+  geom_square() +
+  geom_mark(sep = '\n',sig_thres = 0.05, size = 2, color = "white") +
+  scale_fill_gradientn(colours = RColorBrewer::brewer.pal(11, "RdBu")) +
+  scale_x_discrete(labels = c(
+                              pH = "pH", 
+                              salt_content = "Salt_content (‰)", 
+                              tc = "TC (%)", 
+                              tn = "TN (%)", 
+                              tp = "TP (%)", 
+                              avail_p = "Avail_P (mg/kg)",
+                              cnratio = "TC:TN",
+                              npration = "TN:TP",
+                              cpration = "TC:TP",
+                              napration = "TN:Avail_P",
+                              capration = "TC:Avail_P"), 
+                              limit = c("pH","salt_content","tc","tn","tp","avail_p","cnratio","npration","cpration","napration","capration")) +
+  scale_y_discrete(limit = rownames(corr_matrix$r)[order(corr_matrix$r[,"salt_content"], decreasing = T)]) +
+  labs(title = "Correlation") +
+  guides(fill = guide_colorbar(title = "Spearman's Rho")) +
+  theme(plot.margin = margin(0, 0, 0, 0.5, "cm"),
+        plot.title = element_text(size = 20,face = "bold", hjust = 0.5),
+        axis.text = element_text(size = 12,face = "bold"),
+        axis.title.y = element_blank(),
+        legend.title = element_text(size = 15,face = "bold"),
+        legend.text = element_text(size = 12,face = "bold"),  
+        legend.position = c(0.8,0.15),  # c(x,y)
+        legend.background = element_rect(fill = "transparent", color = NA))
+
+print(p4)
+
+
+### 2. barplot for function abundance
+ko_abundance6$MC <- rowMeans(ko_abundance6[, 2:11])  # mean value
+ko_abundance6$TS <- rowMeans(ko_abundance6[, 12:21])
+
+ko_abundance6$MC_Sd <- apply(ko_abundance6[, 2:11], 1, sd)  # standard deviation
+ko_abundance6$TS_Sd <- apply(ko_abundance6[, 12:21], 1, sd)
+
+# order of level2
+ko_abundance6$order <- ko_abundance6$TS-ko_abundance6$MC
+order <- ko_abundance6$level2[order(ko_abundance6$order,decreasing = T)]
+
+# find cut-off point,to distinguish TS>MC and TS<MC
+min_pos <- min(ko_abundance6[ko_abundance6$order >0,]$order)  # TS>MC
+order_pos <- ko_abundance6[ko_abundance6$order==min_pos,]$level2
+
+max_neg <- max(ko_abundance6[ko_abundance6$order <0,]$order)  # MC<TS
+order_neg <- ko_abundance6[ko_abundance6$order==max_neg,]$level2
+
+# long format for mean value
+data1 <- melt(ko_abundance6[, c("MC", "TS","level2")],id=c("level2"))
+data1$id <- paste0(data1$level2,data1$variable)
+
+# long format for standard deviation
+data2 <- melt(ko_abundance6[, c("TS_Sd","MC_Sd","level2")],id=c("level2"))
+data2$variable <- gsub("TS_Sd","TS",data2$variable) 
+data2$variable <- gsub("MC_Sd","MC",data2$variable)
+data2$id <- paste0(data2$level2,data2$variable)
+
+# merge mean value and standard deviation
+data <- merge(data1,data2,by="id")
+data <- data[,c(2:4,7)]
+names(data) <- c("level2","type","mean","sd")
+
+# t test
+p <- data.frame()
+conf_int <- data.frame()
+for (i in 1:nrow(ko_abundance6)){
+  t_test_result <- t.test(ko_abundance6[i,2:11],ko_abundance6[i,12:21])
+  p_tem <- data.frame(ko_abundance6$level2[i],t_test_result$p.value)
+  conf_int_tem <- data.frame(level2 = ko_abundance6$level2[i], 
+                             diff = t_test_result$estimate[1]-t_test_result$estimate[2], 
+                             conf95_down = t_test_result$conf.int[1], 
+                             conf95_up = t_test_result$conf.int[2],
+                             p  = t_test_result$p.value)
+  p <- rbind(p, p_tem)
+  conf_int <- rbind(conf_int,conf_int_tem)
+}
+
+p$p.adj <- p.adjust(p$t_test_result.p.value, method = "BH")  # p value correct
+conf_int$p.adj <- p.adjust(conf_int$p, method = "BH")
+
+# create asterisk
+p <- p %>%
+  mutate(asterisk = ifelse(p.adj < 0.001, "***",
+                           ifelse(p.adj < 0.01, "**",
+                                  ifelse(p.adj < 0.05, "*", ""))))
+names(p) <- c("level2","p","p.adj","asterisk")
+
+# position for asterisk
+data.p <- aggregate((data$mean+data$sd)~level2,data,FUN="mean")  
+p.data <- merge(p,data.p,by="level2")
+
+# add type column for geom_text (consistent with data for plot)
+p.data$type <- "MC"
+p.data1 <- p.data
+p.data1$type <- "TS"
+p.data <- rbind(p.data, p.data1)
+
+names(p.data)[5] <- "x"
+
+# add label for asterisk(legend)
+label_p <- ko_abundance6[,c("level2","order")]
+label_p <- mutate(label_p,label=ifelse(label_p$order > 0,"Wildland", "Farmland"))
+p.data <- merge(p.data, label_p, by="level2")
+
+data$level2 <- factor(data$level2,levels = order)
+midpoint <- mean(as.numeric(c(which(levels(data$level2)==order_pos), which(levels(data$level2)==order_neg))))
+
+# remove y axis
+p1 <- ggplot(data = data, aes(x = mean, y = level2, fill = factor(type))) +
+      geom_col(position = "dodge", width = 0.7)+
+      geom_errorbar(aes(xmin = mean-sd, xmax = mean + sd, width = 0.55), position = position_dodge(width = 0.7)) +
+      scale_fill_manual(name = "Habitat",
+                        values = c("MC" = "#008000","TS" = "#FFA500"),
+                        label= c("MC" = "Farmland","TS" = "Wildland")) +
+      scale_y_discrete(limit = rownames(corr_matrix$r)[order(corr_matrix$r[ ,"salt_content"], decreasing = T)]) +
+      scale_color_manual(values = c("Farmland" = "#008000","Wildland" = "#FFA500")) +
+      #geom_hline(yintercept = midpoint, linetype = "dashed", color = "red") +
+      labs(x="Mean proportion (%)",y="",title = "Function abundance") +
+      geom_text(p.data,mapping=aes(x=x+0.012,y=level2,label=as.character(asterisk),col=factor(label)),size=5,,vjust = 0.7) +  # vjust is positive, down
+      #annotate(geom = "text",x = 0.12,y=midpoint+1,label="Farmland > Wildland",size=3,color="red") +
+      #annotate(geom = "text",x = 0.12,y=midpoint-1,label="Wildland > Farmland",size=3,color="red") +
+      guides(color = "none") +
+      theme_bw() + 
+      theme(plot.margin = margin(0, 0, 0, 0, "pt"),
+            axis.text.y = element_blank(),
+            plot.title = element_text(size = 20,face = "bold", hjust = 0.5),
+            axis.text = element_text(color = "black",size = 12,face = "bold"),
+            axis.title.x = element_text(color="black",size = 15,face = "bold"),
+            axis.title.y = element_blank(),  # remove blank in left of picture
+            axis.ticks.y = element_blank(),
+            legend.title = element_text(size = 15,face = "bold"),
+            legend.text = element_text(size = 12,face = "bold"),
+            #legend.key.size = unit(0.3,"cm"),
+            legend.position = c(0.8,0.15),  # c(x,y)
+            legend.background = element_rect(fill = "transparent", color = NA))
+
+print(p1)
+
+# keep y axis
+p1_1 <- ggplot(data = data, aes(x = mean, y = level2, fill = factor(type))) +
+        geom_col(position = "dodge", width = 0.7)+
+        geom_errorbar(aes(xmin = mean-sd, xmax = mean + sd, width = 0.55), position = position_dodge(width = 0.7)) +
+        scale_fill_manual(name = "Habitat",
+                          values = c("MC" = "#008000","TS" = "#FFA500"),
+                          label= c("MC" = "Farmland","TS" = "Wildland")) +
+        scale_y_discrete(limit = rownames(corr_matrix$r)[order(corr_matrix$r[ ,"salt_content"], decreasing = T)]) +
+        scale_color_manual(values = c("Farmland" = "#008000","Wildland" = "#FFA500")) +
+        #geom_hline(yintercept = midpoint, linetype = "dashed", color = "red") +
+        labs(x="Mean proportion (%)",y="",title = "Function abundance") +
+        geom_text(p.data,mapping=aes(x=x+0.012,y=level2,label=as.character(asterisk),col=factor(label)),size=5,,vjust = 0.7) +
+        #annotate(geom = "text",x = 0.12,y=midpoint+1,label="Farmland > Wildland",size=3,color="red") +
+        #annotate(geom = "text",x = 0.12,y=midpoint-1,label="Wildland > Farmland",size=3,color="red") +
+        guides(color = "none") +
+        theme_bw() + 
+        theme(plot.margin = margin(0, 0, 0, 0, "pt"),
+              #axis.text.y = element_blank(),
+              plot.title = element_text(size = 20,face = "bold", hjust = 0.5),
+              axis.text = element_text(color = "black",size = 12,face = "bold"),
+              axis.title.x = element_text(color="black",size = 15,face = "bold"),
+              axis.title.y = element_blank(), 
+              axis.ticks.y = element_blank(),
+              legend.title = element_text(size = 15,face = "bold"),
+              legend.text = element_text(size = 12,face = "bold"),
+              #legend.key.size = unit(0.3,"cm"),
+              legend.position = c(0.8,0.15),  # c(x,y)
+              legend.background = element_rect(fill = "transparent", color = NA))
+
+print(p1_1)
+
+
+### 3. confidence interval
+
+# set color
+conf_int <- mutate(conf_int,change = ifelse(conf_int$p.adj < 0.05,ifelse(conf_int$diff > 0, "Farmland","Wildland"),"Stable"))
+
+# remove y axis
+p2 <- ggplot(data = conf_int,aes(x=diff,y=level2)) +
+      geom_point(aes(color=factor(change))) +
+      geom_vline(xintercept = 0,linewidth = 0.5,linetype = 2) +
+      geom_errorbar(aes(xmin = conf95_down, xmax = conf95_up, width = 0.6,color=factor(change)), position = position_dodge(width = 1)) +
+      #scale_fill_manual(name="Habitat", values = c("Farmland" = "green", "Wildland" = "red", "stable" = "darkgrey")) +
+      scale_color_manual(name="Significance", values = c("Farmland" = "green", "Wildland" = "red", "Stable" = "darkgrey"),
+                         labels =c("Farmland" = "Up (Farmland)", "Wildland" = "Up (Wildland)", "Stable" = "Stable")) +
+      scale_y_discrete(limit = rownames(corr_matrix$r)[order(corr_matrix$r[,"salt_content"], decreasing = T)]) +
+      #geom_hline(yintercept = midpoint, linetype = "dashed", color = "red") +
+      labs(x="Difference between  proportion (%)",y="",title = "95% confidence intervals") +
+      geom_text(mapping=aes(x=diff, 
+                            y=as.numeric(factor(level2, levels = rownames(corr_matrix$r)[order(corr_matrix$r[,"salt_content"], decreasing = T)]))+0.5,
+                            label=paste0("p = ", round(p.adj,4))),size = 2.5,col="red",vjust = 0.7) +
+      #annotate(geom = "text",x = 0.12,y=midpoint+1,label="Farmland > Wildland",size=3,color="red") +
+      #annotate(geom = "text",x = 0.12,y=midpoint-1,label="Wildland > Farmland",size=3,color="red") +
+      theme_bw() + 
+      theme(plot.margin = margin(0, 0, 0, 0, "pt"),
+            #axis.text.y = element_blank(),
+            plot.title = element_text(size = 20,face = "bold", hjust = 0.5),
+            axis.text = element_text(color = "black",size = 12,face = "bold"),
+            axis.title.x = element_text(color="black",size = 15,face = "bold"),
+            axis.title.y = element_blank(),
+            axis.text.y = element_blank(),
+            axis.ticks.y = element_blank(),
+            legend.title = element_text(size = 15,face = "bold"),
+            legend.text = element_text(size = 12,face = "bold"),
+            #legend.key.size = unit(0.3,"cm"),
+            legend.position = c(0.8,0.15),  # c(x,y)
+            legend.background = element_rect(fill = "transparent", color = NA))
+print(p2)
+
+# keep y axis
+p2_1 <- ggplot(data = conf_int,aes(x=diff,y=level2)) +
+        geom_point(aes(color=factor(change))) +
+        geom_vline(xintercept = 0,linewidth = 0.5,linetype = 2) +
+        geom_errorbar(aes(xmin = conf95_down, xmax = conf95_up, width = 0.6,color=factor(change)), position = position_dodge(width = 1)) +
+        #scale_fill_manual(name="Habitat", values = c("Farmland" = "green", "Wildland" = "red", "stable" = "darkgrey")) +
+        scale_color_manual(name="Significance", values = c("Farmland" = "green", "Wildland" = "red", "Stable" = "darkgrey"),
+                           labels =c("Farmland" = "Up (Farmland)", "Wildland" = "Up (Wildland)", "Stable" = "Stable")) +
+        scale_y_discrete(limit = rownames(corr_matrix$r)[order(corr_matrix$r[,"salt_content"], decreasing = T)]) +
+        #geom_hline(yintercept = midpoint, linetype = "dashed", color = "red") +
+        labs(x="Difference between  proportion (%)",y="",title = "95% confidence intervals") +
+        geom_text(mapping=aes(x=diff, 
+                              y=as.numeric(factor(level2, levels = rownames(corr_matrix$r)[order(corr_matrix$r[,"salt_content"], decreasing = T)]))+0.5,
+                              label=paste0("p = ", round(p.adj,4))),size = 2.5,col="black",vjust = 0.7) +  # vjust为正向下调整y轴
+        #annotate(geom = "text",x = 0.12,y=midpoint+1,label="Farmland > Wildland",size=3,color="red") +
+        #annotate(geom = "text",x = 0.12,y=midpoint-1,label="Wildland > Farmland",size=3,color="red") +
+        theme_bw() + 
+        theme(plot.margin = margin(0, 0, 0, 0, "pt"),
+              #axis.text.y = element_blank(),
+              plot.title = element_text(size = 20,face = "bold", hjust = 0.5),
+              axis.text = element_text(color = "black",size = 12,face = "bold"),
+              axis.title.x = element_text(color="black",size = 15,face = "bold"),
+              axis.title.y = element_blank(),
+              axis.ticks.y = element_blank(),
+              legend.title = element_text(size = 15,face = "bold"),
+              legend.text = element_text(size = 12,face = "bold"),
+              #legend.key.size = unit(0.3,"cm"),
+              legend.position = c(0.8,0.15),  # c(x,y)
+              legend.background = element_rect(fill = "transparent", color = NA))
+print(p2_1)
+
+
+# saveRDS(p1,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/picrust2/Abundance_barplot.rda")
+# saveRDS(p1_1,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/picrust2/Abundance_barplot_with_name.rda")
+# save(p2,corr_matrix,file = "E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/picrust2/Confidence_intervals.rda")
+# saveRDS(p2_1,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/picrust2/Confidence_intervals_with_name.rda")
+# saveRDS(p4,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/picrust2/Correlation_with_name.rda")
+
+
+p_all <- p4+p1+p2
+
+# margin of final plot and position of legend can be adjusted in this way
+# margin of final plot can be adjusted by margin of each plots, not find the way to adjust directly
+p_all <- p_all + plot_layout(guides = c("collect"), ncol = 3) + theme(legend.position = 'right') 
+#p_all[[1]] <- p_all[[1]] + theme(plot.margin = margin(0, 0, 0, 0.5, "cm"))
+p_all[[2]] <- p_all[[2]] + theme(axis.title.x = element_text(vjust = 21.5))
+p_all[[3]] <- p_all[[3]] + theme(axis.title.x = element_text(vjust = 21.5))
+#p_all[[4]] <- p_all[[4]] + theme(plot.margin = margin(0, 0, 0, -5, "pt"))
+print(p_all)
+
+
+print(p4)
+print(p1_1)
+print(p2_1)
+
+
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/picrust2/Function_all.svg", p_all, height = 9, width = 16)
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/picrust2/Function_all.pdf", p_all, height = 9, width = 16)
+
+```
+

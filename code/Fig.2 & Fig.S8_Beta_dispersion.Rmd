@@ -1,0 +1,504 @@
+---
+title: "Fig.2 & Fig.S8_Beta_dispersion"
+author: "Huanhuan Zhu"
+date: "2024-09-25"
+output: html_document
+---
+
+```{r,fig.align='center', fig.height=4, fig.width=6}
+#############################Fig.2 & Fig.S8_Beta_dispersion##########################
+
+library(vegan)
+library(betapart)
+library(agricolae)
+library(ggplot2)
+library(patchwork)
+
+
+### 1. AMF-Bray
+rm(list=ls())
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/AMF/otu")
+
+# Reading OTU table
+otu_all0 <- read.csv("otu_amfFlattening.csv",check.names = F,row.names = 1,header = T)
+otu_all0 <- as.data.frame(t(otu_all0))
+
+# Read metadata file
+group0 <- read.csv("sample_metadata.csv",header = T)
+group0 <- na.omit(group0)
+group <- group0[order(group0$sample.id),]
+otu_all0$sample.id <- rownames(otu_all0)
+identical(otu_all0$sample.id,group$sample.id)
+otu_all <- merge(otu_all0,group,by= "sample.id")
+
+dis <- vegdist(decostand(otu_all[,2:671],"hellinger"), method = 'bray')
+mod <- betadisper(d = dis, group = factor(otu_all$plants), type = 'centroid')
+
+#mod
+#print(anova(mod));TukeyHSD(mod);TukeyHSD(mod)
+
+p <- adonis2(dis~otu_all$plants)
+print(p)
+
+# (1) old betadispersion
+plotcol <- c('red','orange',"#20B2AA",'blue',"#581845")
+
+#pdf("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/AMF/otu/Betadisper/AMF-Betadisper-PCoA.pdf",height = 4,width=4)
+mar=c(0.5, 0.5, 0.5, 0.5)
+
+plot(mod, col=plotcol,hull = FALSE,cex = 1,label.cex = 0.6,
+     main="",xlab="PC1", ylab="PC2",sub="Bray",seg.col=plotcol)
+title(paste0("AMF-Betadispersion"),cex =0.8, font =2,line = 2)
+mtext(side = 3, sprintf("Adonis: F = %.3f; P = %.3f", p$F[1],p$`Pr(>F)`[1]), 
+      col="red", cex =0.6, font =2,line = 0.8)
+mtext(side = 3, sprintf("Betadisper: F = %.3f; P = %.3f",anova(mod)$`F value`[1], anova(mod)$`Pr(>F)`[1]), 
+      col="red", cex =0.6, font =2,line = 0)
+
+#dev.off()
+
+# (2) new betadispersion & PCoA
+df <- data.frame(mod$distances,mod$group)
+
+# Nonparametric test
+ST <- kruskal(mod$distances,mod$group, p.adj = "fdr")
+
+# Extracting Chi square value and P value from the result
+statis <- as.data.frame(rbind(ST$statistics[,1:2]))
+
+# Creating dataframe for Chi square value and P value
+# Sprintf for pasting texts and values
+# asterisk (*) among elements represent pasting without space, tilde (~) among elements represent pasting witht space
+rp.value <- data.frame(
+  label=sprintf("P = %.3e (χ² = %.3g)", 
+                statis$p.chisq,statis$Chisq),
+  x = "Tamarix chinensis",
+  y=0.38)
+
+# Extracting multiple comparision result
+statis1 <- as.data.frame(rbind(ST$groups))
+# Extracting mean of Nonparametric tests
+statis2 <- as.data.frame(rbind(ST$means))
+
+# Extracting Ymax for add letters of multiple comparision?
+p1 <- ggplot(df, aes(y=mod.distances, x = factor(mod.group))) +
+  stat_boxplot(geom = "errorbar", width=0.3) +
+  geom_boxplot(width = 0.5)
+ymaxdata <- layer_data(p1) 
+statis2$ymax <- ymaxdata$ymax
+
+# Merging dataframe of multiple comparision result with dataframe of mean of nonparametric tests
+statis1$id <- rownames(statis1)
+statis2$id <- rownames(statis2)
+statis2 <- merge(statis2, statis1, by = "id")
+
+# Creating dataframe of geom_text for letters of nonparametric tests
+multcomp.data <- data.frame(
+  abc = factor(statis2$groups),
+  x     = statis2$id,
+  y     = as.numeric(statis2$ymax))
+
+# Plot
+p2_amf <- ggplot(df, aes(y=mod.distances, x = factor(mod.group, levels = c("Bare land","Suaeda","Tamarix chinensis","Cotton","Maize")))) +
+  stat_boxplot(geom = "errorbar", width=0.3) +
+  geom_boxplot(width = 0.5) +
+  #geom_jitter(size = 0.8) +
+  labs(x = "Habitat", y= "Distance to centroid", title = "AMF-Betadispersion") +
+  scale_x_discrete(labels = c(
+    'Bare land' = "Bareland", 
+    'Cotton' = "Cotton", 
+    'Maize' = "Maize", 
+    'Suaeda' = "Suaeda",
+    'Tamarix chinensis' = "Tamarix")) +
+  geom_text(
+    data  = rp.value, mapping = aes(x = x, y = y, label = label),parse = F,  col="red", hjust = 0.5, size = 5) + 
+  geom_text(data = multcomp.data, aes(x = x,y = y+0.02,label=abc),
+            color = "black",
+            size = 6, hjust = 0.5) +
+  theme_bw() +
+  ylim(0.2,0.4) +
+  theme(panel.grid = element_blank(), 
+        axis.ticks.y = element_line(color = "black",linewidth = 0.5)) +
+  theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold"),
+        axis.title = element_text(size = 16, face = "bold"),
+        axis.title.x = element_blank(),
+        axis.text = element_text(size = 12, face = "bold",color = "black"))
+p2_amf
+#ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/AMF/otu/Betadisper/AMF-Betadisper-Boxplot.pdf", p2_amf, height = 4,width=4.5)
+
+# Boxplot for betadispersion
+newplot <- function(title, path){   
+  df1 <- data.frame(PCoA1=mod$vectors[,1], PCoA2=mod$vectors[,2], Habitat=mod$group)
+  centroid1 <- aggregate(df1$PCoA1~df1$Habitat,FUN="mean")
+  centroid2 <- aggregate(df1$PCoA2~df1$Habitat,FUN="mean")
+  
+  centroid <- merge(centroid1,centroid2,by="df1$Habitat")
+  names(centroid) <- c("Habitat","PCoA1","PCoA2")
+  subtitle_text <- paste(
+    sprintf("Adonis: F = %.3f; P = %.3e", p$F[1], p$`Pr(>F)`[1]),
+    sprintf("Betadispersion: F = %.3f; P = %.3e", anova(mod)$`F value`[1], anova(mod)$`Pr(>F)`[1]),
+    sep = "\n")
+  
+  p3 <<- ggplot(df1, aes(PCoA1,PCoA2,color = factor(Habitat,levels = c("Bare land","Suaeda","Tamarix chinensis","Cotton","Maize")))) +
+    geom_point(size = 5, alpha=0.5) +
+    geom_segment(data = merge(df1, centroid, by = "Habitat"), 
+                 aes(x = PCoA1.x, y = PCoA2.x, xend = PCoA1.y, yend = PCoA2.y),alpha=0.5) +
+    scale_colour_manual(
+      name = "Habitat",
+      label = c(
+        'Bare land'='Bareland',
+        'Cotton'='Cotton',
+        'Maize'='Maize',
+        'Suaeda'='Suaeda',
+        'Tamarix chinensis'='Tamarix'), 
+      values = c("red","blue","purple","darkgreen","deepskyblue"),
+      guide=guide_legend(override.aes=list(shape = 16))) +
+    labs(title = title,subtitle = subtitle_text) +
+    theme_bw() +
+    theme(
+      plot.title = element_text(size = 20, face = "bold",hjust = 0.5), 
+      plot.subtitle = element_text(color = "red", size = 12, face = "bold",  hjust = 0.5), 
+      legend.title = element_text(colour = "black", size = 15, face = "bold"),
+      legend.text = element_text(colour = "black", size = 12, face = "bold"),
+      axis.text = element_text(colour = "black", size = 12, face = "bold"),
+      axis.title = element_text(colour = "black", size = 15, face = "bold")) 
+  
+  print(p3)
+  #ggsave(path, p2, height = 4,width=6)
+}
+
+# (3) boxplot of  betadispersion
+newplot("AMF-Betadispersion","E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/AMF/otu/Betadisper/AMF-Betadisper-PCoA-new.pdf")
+p3_amf <- p3
+
+
+### 2. Bacteria-Bray
+rm(list=setdiff(ls(), c("newplot", "p2_amf", "p3_amf")))
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Bacteria/otu")
+
+# Reading OTU table
+otu_all0 <- read.csv("otu_bacteriaFlattening.csv",check.names = F,row.names = 1,header = T)
+otu_all0 <- as.data.frame(t(otu_all0))
+
+# Read metadata file
+group0 <- read.csv("sample_metadata.csv",header = T)
+group0 <- na.omit(group0)
+group <- group0[order(group0$sample.id),]
+otu_all0$sample.id <- rownames(otu_all0)
+identical(otu_all0$sample.id,group$sample.id)
+otu_all <- merge(otu_all0,group,by= "sample.id")
+
+dis <- vegdist(decostand(otu_all[,2:1924],"hellinger"), method = 'bray')
+mod <- betadisper(d = dis, group = factor(otu_all$plants), type = 'centroid')
+
+#mod
+#print(anova(mod));TukeyHSD(mod);TukeyHSD(mod)
+
+p <- adonis2(dis~otu_all$plants)
+print(p)
+
+# (1) old betadispersion
+plotcol <- c('red','orange',"#20B2AA",'blue',"#581845")
+
+#pdf("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Bacteria/otu/Betadisper/Bacteria-Bray-Betadisper.pdf",height = 4,width=4)
+mar=c(0.5, 0.5, 0.5, 0.5)
+
+plot(mod, col=plotcol,hull = FALSE,cex = 1,label.cex = 0.6,
+     main="",xlab="PC1", ylab="PC2",sub="Bray",seg.col=plotcol)
+title(paste0("Bacteria-Betadispersion"),cex =0.8, font =2,line = 2)
+mtext(side = 3, sprintf("Adonis: F = %.3f; P = %.3f", p$F[1],p$`Pr(>F)`[1]), 
+      col="red", cex =0.6, font =2,line = 0.8)
+mtext(side = 3, sprintf("Betadisper: F = %.3f; P = %.3f",anova(mod)$`F value`[1], anova(mod)$`Pr(>F)`[1]), 
+      col="red", cex =0.6, font =2,line = 0)
+
+#dev.off()
+
+# (2) new betadispersion
+df <- data.frame(mod$distances,mod$group)
+
+ST <- kruskal(mod$distances,mod$group, p.adj = "fdr")
+
+statis <- as.data.frame(rbind(ST$statistics[,1:2]))
+
+rp.value <- data.frame(
+  label=sprintf("P = %.3e (χ² = %.3g)", 
+                statis$p.chisq,statis$Chisq),
+  x = "Tamarix chinensis",
+  y=0.55)
+
+statis1 <- as.data.frame(rbind(ST$groups))
+statis2 <- as.data.frame(rbind(ST$means))
+
+p1 <- ggplot(df, aes(y=mod.distances, x = factor(mod.group))) +
+  stat_boxplot(geom = "errorbar", width=0.3) +
+  geom_boxplot(width = 0.5)
+ymaxdata <- layer_data(p1) 
+statis2$ymax <- ymaxdata$ymax
+
+statis1$id <- rownames(statis1)
+statis2$id <- rownames(statis2)
+statis2 <- merge(statis2, statis1, by = "id")
+
+multcomp.data <- data.frame(
+  abc = factor(statis2$groups),
+  x     = statis2$id,
+  y     = as.numeric(statis2$ymax))
+
+p2_bac <- ggplot(df, aes(y=mod.distances, x = factor(mod.group, levels = c("Bare land","Suaeda","Tamarix chinensis","Cotton","Maize")))) +
+          stat_boxplot(geom = "errorbar", width=0.3) +
+          geom_boxplot(width = 0.5) +
+          #geom_jitter(size = 0.8) +
+          labs(x = "Habitat", y= "Distance to centroid", title = "Bacteria-Betadispersion") +
+          scale_x_discrete(labels = c(
+            'Bare land' = "Bareland", 
+            'Cotton' = "Cotton", 
+            'Maize' = "Maize", 
+            'Suaeda' = "Suaeda",
+            'Tamarix chinensis' = "Tamarix")) +
+          geom_text(
+            data  = rp.value, mapping = aes(x = x, y = y, label = label),parse = F,  col="red", hjust = 0.5, size = 5) + 
+          geom_text(data = multcomp.data, aes(x = x,y = y+0.02,label=abc),
+                    color = "black",
+                    size = 6, hjust = 0.5) +
+          theme_bw() +
+          ylim(0.20,0.6) +
+          theme(panel.grid = element_blank(), 
+                axis.ticks.y = element_line(color = "black",linewidth = 0.5)) +
+          theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold"),
+                axis.title = element_text(size = 16, face = "bold"),
+                axis.title.x = element_blank(),
+                axis.text = element_text(size = 12, face = "bold",color = "black"))
+p2_bac
+#ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Bacteria/otu/Betadisper/Bacteria-Betadisper-Boxplot.pdf", p2_bac, height = 4,width=4.5)
+
+# (3) boxplot of betadispersion
+newplot("Bacteria-Betadispersion","E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Bacteria/otu/Betadisper/Bacteria-Betadispersion-PCoA-new.pdf")
+p3_bac <- p3
+
+
+### 3. Fungi-Bray
+rm(list=setdiff(ls(), c("newplot", "p2_amf", "p3_amf", "p2_bac", "p3_bac")))
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Fungi/otu")
+
+otu_all0 <- read.csv("otu_fungiFlattening.csv",check.names = F,row.names = 1,header = T)
+otu_all0 <- as.data.frame(t(otu_all0))
+
+group0 <- read.csv("sample_metadata.csv",header = T)
+group0 <- na.omit(group0)
+group <- group0[order(group0$sample.id),]
+otu_all0$sample.id <- rownames(otu_all0)
+identical(otu_all0$sample.id,group$sample.id)
+otu_all <- merge(otu_all0,group,by= "sample.id")
+
+dis <- vegdist(decostand(otu_all[,2:2512],"hellinger"), method = 'bray')
+mod <- betadisper(d = dis, group = factor(otu_all$plants), type = 'centroid')
+
+#mod
+#print(anova(mod));TukeyHSD(mod);TukeyHSD(mod)
+
+p <- adonis2(dis~otu_all$plants)
+print(p)
+
+# (1) old betadispersion
+plotcol <- c('red','orange',"#20B2AA",'blue',"#581845")
+
+#pdf("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Fungi/otu/Betadisper/Fungi-Bray-Betadisper.pdf",height = 4,width=4)
+mar=c(0.5, 0.5, 0.5, 0.5)
+
+plot(mod, col=plotcol,hull = FALSE,cex = 1,label.cex = 0.6,
+     main="",xlab="PC1", ylab="PC2",sub="Bray",seg.col=plotcol)
+title(paste0("Fungi-Betadispersion"),cex =0.8, font =2,line = 2)
+mtext(side = 3, sprintf("Adonis: F = %.3f; P = %.3f", p$F[1],p$`Pr(>F)`[1]), 
+      col="red", cex =0.6, font =2,line = 0.8)
+mtext(side = 3, sprintf("Betadisper: F = %.3f; P = %.3f",anova(mod)$`F value`[1], anova(mod)$`Pr(>F)`[1]), 
+      col="red", cex =0.6, font =2,line = 0)
+
+#dev.off()
+
+# (2) new betadispersion
+df <- data.frame(mod$distances,mod$group)
+
+ST <- kruskal(mod$distances,mod$group, p.adj = "fdr")
+
+statis <- as.data.frame(rbind(ST$statistics[,1:2]))
+
+rp.value <- data.frame(
+  label=sprintf("P = %.3e (χ² = %.3g)", 
+                statis$p.chisq,statis$Chisq),
+  x = "Tamarix chinensis",
+  y=0.65)
+
+statis1 <- as.data.frame(rbind(ST$groups))
+statis2 <- as.data.frame(rbind(ST$means))
+
+p1 <- ggplot(df, aes(y=mod.distances, x = factor(mod.group))) +
+  stat_boxplot(geom = "errorbar", width=0.3) +
+  geom_boxplot(width = 0.5)
+ymaxdata <- layer_data(p1) 
+statis2$ymax <- ymaxdata$ymax
+
+statis1$id <- rownames(statis1)
+statis2$id <- rownames(statis2)
+statis2 <- merge(statis2, statis1, by = "id")
+
+multcomp.data <- data.frame(
+  abc = factor(statis2$groups),
+  x     = statis2$id,
+  y     = as.numeric(statis2$ymax))
+
+p2_fung <-  ggplot(df, aes(y=mod.distances, x = factor(mod.group, levels = c("Bare land","Suaeda","Tamarix chinensis","Cotton","Maize")))) +
+            stat_boxplot(geom = "errorbar", width=0.3) +
+            geom_boxplot(width = 0.5) +
+            #geom_jitter(size = 0.8) +
+            labs(x = "Habitat", y= "Distance to centroid", title = "Fungi-Betadispersion") +
+            scale_x_discrete(labels = c(
+                                        'Bare land' = "Bareland", 
+                                        'Cotton' = "Cotton", 
+                                        'Maize' = "Maize", 
+                                        'Suaeda' = "Suaeda",
+                                        'Tamarix chinensis' = "Tamarix")) +
+            geom_text(
+              data  = rp.value, mapping = aes(x = x, y = y, label = label),parse = F,  col="red", hjust = 0.5, size = 5) + 
+            geom_text(data = multcomp.data, aes(x = x,y = y+0.03,label=abc),
+                      color = "black",
+                      size = 6, hjust = 0.5) +
+            theme_bw() +
+            ylim(0.25,0.7) +
+            theme(panel.grid = element_blank(), 
+                  axis.ticks.y = element_line(color = "black",linewidth = 0.5)) +
+            theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold"),
+                  axis.title = element_text(size = 16, face = "bold"),
+                  axis.title.x = element_blank(),
+                  axis.text = element_text(size = 12, face = "bold",color = "black"))
+p2_fung
+#ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Fungi/otu/Betadisper/Fungi-Betadisper-Boxplot.pdf", p2_fung, height = 4,width=4.5)
+
+# (3) boxplot of betadispersion
+newplot("Fungi-Betadispersion","E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Fungi/otu/Betadisper/Fungi-Betadispersion-PCoA-new.pdf")
+p3_fung <- p3
+
+
+### 4. Protist-Bray
+rm(list=setdiff(ls(), c("newplot", "p2_amf", "p3_amf", "p2_bac", "p3_bac", "p2_fung", "p3_fung")))
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Protist/otu")
+
+otu_all0 <- read.csv("otu_protistFlattening.csv",check.names = F,row.names = 1,header = T)
+otu_all0 <- as.data.frame(t(otu_all0))
+
+group0 <- read.csv("sample_metadata.csv",header = T)
+group0 <- na.omit(group0)
+group <- group0[order(group0$sample.id),] 
+otu_all0$sample.id <- rownames(otu_all0)
+identical(otu_all0$sample.id,group$sample.id)
+otu_all <- merge(otu_all0,group,by= "sample.id")
+
+dis <- vegdist(decostand(otu_all[,2:2283],"hellinger"), method = 'bray')
+mod <- betadisper(d = dis, group = factor(otu_all$plants), type = 'centroid')
+
+#mod
+#print(anova(mod));TukeyHSD(mod);TukeyHSD(mod)
+
+p <- adonis2(dis~otu_all$plants)
+print(p)
+
+# (1) old betadispersion
+plotcol <- c('red','orange',"#20B2AA",'blue',"#581845")
+
+#pdf("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Protist/otu/Betadisper//Protist-Bray-Betadisper.pdf",height = 4,width=4)
+mar=c(0.5, 0.5, 0.5, 0.5)
+
+plot(mod, col=plotcol,hull = FALSE,cex = 1,label.cex = 0.6,
+     main="",xlab="PC1", ylab="PC2",sub="Bray",seg.col=plotcol)
+title(paste0("Protist-Betadispersion"),cex =0.8, font =2,line = 2)
+mtext(side = 3, sprintf("Adonis: F = %.3f; P = %.3f", p$F[1],p$`Pr(>F)`[1]), 
+      col="red", cex =0.6, font =2,line = 0.8)
+mtext(side = 3, sprintf("Betadisper: F = %.3f; P = %.3f",anova(mod)$`F value`[1], anova(mod)$`Pr(>F)`[1]), 
+      col="red", cex =0.6, font =2,line = 0)
+
+#dev.off()
+
+# (2) new betadispersion
+df <- data.frame(mod$distances,mod$group)
+
+ST <- kruskal(mod$distances,mod$group, p.adj = "fdr")
+
+statis <- as.data.frame(rbind(ST$statistics[,1:2]))
+
+rp.value <- data.frame(
+  label=sprintf("P = %.3e (χ² = %.3g)", 
+                statis$p.chisq,statis$Chisq),
+  x = "Tamarix chinensis",
+  y=0.47)
+
+statis1 <- as.data.frame(rbind(ST$groups))
+statis2 <- as.data.frame(rbind(ST$means))
+
+p1 <- ggplot(df, aes(y=mod.distances, x = factor(mod.group))) +
+  stat_boxplot(geom = "errorbar", width=0.3) +
+  geom_boxplot(width = 0.5)
+ymaxdata <- layer_data(p1) 
+statis2$ymax <- ymaxdata$ymax
+
+statis1$id <- rownames(statis1)
+statis2$id <- rownames(statis2)
+statis2 <- merge(statis2, statis1, by = "id")
+
+multcomp.data <- data.frame(
+  abc = factor(statis2$groups),
+  x     = statis2$id,
+  y     = as.numeric(statis2$ymax))
+
+p2_prot <-  ggplot(df, aes(y=mod.distances, x = factor(mod.group, levels = c("Bare land","Suaeda","Tamarix chinensis","Cotton","Maize")))) +
+            stat_boxplot(geom = "errorbar", width=0.3) +
+            geom_boxplot(width = 0.5) +
+            #geom_jitter(size = 0.8) +
+            labs(x = "Habitat", y= "Distance to centroid", title = "Protist-Betadispersion") +
+            scale_x_discrete(labels = c(
+                                        'Bare land' = "Bareland", 
+                                        'Cotton' = "Cotton", 
+                                        'Maize' = "Maize", 
+                                        'Suaeda' = "Suaeda",
+                                        'Tamarix chinensis' = "Tamarix")) +
+            geom_text(
+              data  = rp.value, mapping = aes(x = x, y = y, label = label),parse = F,  col="red", hjust = 0.5, size = 5) + 
+            geom_text(data = multcomp.data, aes(x = x,y = y+0.02,label=abc),
+                      color = "black",
+                      size = 6, hjust = 0.5) +
+            theme_bw() +
+            ylim(0.25,0.5) +
+            theme(panel.grid = element_blank(), 
+                  axis.ticks.y = element_line(color = "black",linewidth = 0.5)) +
+            theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold"),
+                  axis.title = element_text(size = 16, face = "bold"),
+                  axis.title.x = element_blank(),
+                  axis.text = element_text(size = 12, face = "bold",color = "black"))
+p2_prot
+#ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Protist/otu/Betadisper/Protist-Betadisper-Boxplot.pdf", p2_prot, height = 4,width=4.5)
+
+# (3) boxplot of betadispersion
+newplot("Protists-Betadispersion","E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Protist/otu/Betadisper/Protist-Betadispersion-PCoA-new.pdf")
+p3_prot <- p3
+
+```{r,fig.align='center', fig.height=9, fig.width=20}
+
+p_all <- (p3_amf + p3_bac + p3_fung + p3_prot + p2_amf + p2_bac + p2_fung + p2_prot) + 
+      plot_layout(nrow = 2, ncol = 4, guides = "collect") #+
+      # plot_annotation(tag_levels = 'a') &
+      # theme(plot.tag = element_text(size = 20, face = "bold"),
+      #       legend.justification = c(1, 0.85))
+
+p_all
+
+# saveRDS(p2_amf,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/betadisper/betadisper_boxplot_amf.rda")
+# saveRDS(p2_bac,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/betadisper/betadisper_boxplot_bac.rda")
+# saveRDS(p2_fung,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/betadisper/betadisper_boxplot_fung.rda")
+# saveRDS(p2_prot,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/betadisper/betadisper_boxplot_prot.rda")
+# saveRDS(p3_amf,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/betadisper/betadisper_amf.rda")
+# saveRDS(p3_bac,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/betadisper/betadisper_bac.rda")
+# saveRDS(p3_fung,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/betadisper/betadisper_fung.rda")
+# saveRDS(p3_prot,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/betadisper/betadisper_prot.rda")
+# 
+# 
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/betadisper/Betadisper.svg", p_all, height = 9,width=20)
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/betadisper/Betadisper.pdf", p_all, height = 9,width=20)
+
+```

@@ -1,0 +1,234 @@
+---
+title: "Fig.3 & Fig.S9_iCAMP plot"
+author: "Huanhuan Zhu"
+date: "2024-09-25"
+output: html_document
+---
+
+```{r,fig.align='center', fig.height=4, fig.width=6}
+#############################################Fig.3 & Fig.S9_iCAMP plot#########################################
+
+
+library(ggplot2)
+library(reshape2)
+library(patchwork)
+
+
+# 1. AMF
+
+# Phylogenetic signal selection
+rm(list=ls())
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/AMF/otu/iCAMP2/output0/")
+phy_sig <- read.csv("Test.PhyloSignalSummary.csv")
+phy_sig2 <- na.omit(melt(phy_sig[(phy_sig$index=="RAsig.adj" | phy_sig$index=="MeanR"),c(2:3,6:11)], id=c("n.min","index")))
+
+p1_amf <- ggplot(data=phy_sig2, aes(x=n.min, y=value, color=factor(variable))) +
+          geom_line(aes(linetype=factor(index))) +
+          geom_point() +
+          labs(title = "AMF-Phylogenetic signal", x="N.min", y= "Value") +
+          scale_x_continuous(breaks = seq(12,96,by=12), limits = c(12,96)) +
+          scale_color_manual(values = c("red","purple","blue","brown","darkgreen","darkblue"),
+                             label= c("pH.pearson"="pH",
+                                      "salt_content.pearson"="Salt content",
+                                      "avail_p.pearson"="Available phosphorus",
+                                      "tn.pearson"="Total nitrogen",
+                                      "tc.perason"="Total carbon",
+                                      "tp.pearson"="Total phosphorus")) +
+          annotate("text", x=20, y=0.90, label="ds = 0.2", color="red", size=5) +
+          theme_bw() +
+          guides(color=guide_legend(title="Environment factor"),
+                 linetype=guide_legend(title="Type")) +
+          theme(plot.title = element_text(size=20,face = "bold",hjust = 0.5),
+                axis.title = element_text(size=15,face = "bold"),
+                axis.text = element_text(size=12,color ="black",face="bold"),
+                legend.title = element_text(size=15,face = "bold"),
+                legend.text = element_text(size=12,face = "bold"))
+print(p1_amf)
+
+# Calculation community assembly process
+rm(list = setdiff(ls(), c("p1_amf")))
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/AMF/otu/iCAMP2/output/")
+
+result_icamp <- read.csv("AMF.ProcessImportance_EachGroup.csv")
+result_icamp2 <- result_icamp[result_icamp$Group %in% c("CK","CL","JP","YM","MH"), ]
+
+result_all2 <- result_icamp2[(result_icamp2$ds==0.2 & result_icamp2$n.min==72),c(5:10)]
+result_all2 <- melt(result_all2,id="Group")
+
+# plot
+p2_amf <- ggplot(data=result_all2,aes(x = factor(Group, levels = c("CK","JP","CL","MH","YM")), y = as.numeric(value),fill = factor(variable))) +
+          geom_col(width = 0.6) +
+          labs(title = "AMF", x="Habitat", y= "Community assembly process (%)") +
+          scale_x_discrete(labels = c(
+            "CK" = "Bareland",
+            "CL" = "Tamarix",
+            "JP" = "Suaeda",
+            "MH" = "Cotton",
+            "YM" = "Maize"
+          )) +
+          scale_fill_manual(values = c("#3b3b3b","#5c7cbc","#d580ec","#47ced1","#fde725")) +
+          theme_bw() +
+          guides(fill=guide_legend(title="Process")) +
+          theme(plot.title = element_text(size=20,face = "bold",hjust = 0.5),
+                axis.title = element_text(size=15,face = "bold"),
+                axis.title.x = element_blank(),
+                axis.text = element_text(size=12,color ="black",face="bold"),
+                legend.title = element_text(size=15,face = "bold"),
+                legend.text = element_text(size=12,face = "bold"))
+
+print(p2_amf)
+
+
+# 2. Bacteria
+
+# Phylogenetic signal selection
+rm(list = setdiff(ls(), c("p1_amf","p2_amf")))
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Bacteria/otu/iCAMP2/output0/")
+phy_sig <- read.csv("Bacteria.PhyloSignalSummary.csv")
+phy_sig2 <- na.omit(melt(phy_sig[(phy_sig$index=="RAsig.adj" | phy_sig$index=="MeanR"),c(2:3,6:11)], id=c("n.min","index")))
+
+p1_bac <- ggplot(data=phy_sig2, aes(x=n.min, y=value, color=factor(variable))) +
+          geom_line(aes(linetype=factor(index))) +
+          geom_point() +
+          labs(title = "Bacteria-Phylogenetic signal", x="N.min", y= "Value") +
+          scale_x_continuous(breaks = seq(12,96,by=12), limits = c(12,96)) +
+          scale_color_manual(values = c("red","purple","blue","brown","darkgreen","darkblue"),
+                             label= c("pH.pearson"="pH",
+                                      "salt_content.pearson"="Salt content",
+                                      "avail_p.pearson"="Available phosphorus",
+                                      "tn.pearson"="Total nitrogen",
+                                      "tc.perason"="Total carbon",
+                                      "tp.pearson"="Total phosphorus")) +
+          annotate("text", x=20, y=0.90, label="ds = 0.2", color="red", size=5) +
+          theme_bw() +
+          guides(color=guide_legend(title="Environment factor"),
+                 linetype=guide_legend(title="Type")) +
+          theme(plot.title = element_text(size=20,face = "bold",hjust = 0.5),
+                axis.title = element_text(size=15,face = "bold"),
+                axis.text = element_text(size=12,color ="black",face="bold"),
+                legend.title = element_text(size=15,face = "bold"),
+                legend.text = element_text(size=12,face = "bold"))
+print(p1_bac)
+
+# Calculation community assembly process
+rm(list = setdiff(ls(), c("p1_amf","p2_amf","p1_bac")))
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Bacteria/otu/iCAMP2/output/")
+
+result_icamp <- read.csv("Bacteria.ProcessImportance_EachGroup.csv")
+result_icamp2 <- result_icamp[result_icamp$Group %in% c("CK","CL","JP","YM","MH"), ]
+
+result_all2 <- result_icamp2[(result_icamp2$ds==0.2 & result_icamp2$n.min==36),c(5:10)]
+result_all2 <- melt(result_all2,id="Group")
+
+p2_bac <- ggplot(data=result_all2,aes(x = factor(Group, levels = c("CK","JP","CL","MH","YM")), y = as.numeric(value),fill = factor(variable))) +
+          geom_col(width = 0.6) +
+          labs(title = "Bacteria", x="Habitat", y= "Community assembly process (%)") +
+          scale_x_discrete(labels = c(
+            "CK" = "Bareland",
+            "CL" = "Tamarix",
+            "JP" = "Suaeda",
+            "MH" = "Cotton",
+            "YM" = "Maize"
+          )) +
+          scale_fill_manual(values = c("#3b3b3b","#5c7cbc","#d580ec","#47ced1","#fde725")) +
+          theme_bw() +
+          guides(fill=guide_legend(title="Process")) +
+          theme(plot.title = element_text(size=20,face = "bold",hjust = 0.5),
+                axis.title = element_text(size=15,face = "bold"),
+                axis.title.x = element_blank(),
+                axis.text = element_text(size=12,color ="black",face="bold"),
+                legend.title = element_text(size=15,face = "bold"),
+                legend.text = element_text(size=12,face = "bold"))
+print(p2_bac)
+
+
+# 3. Protist
+
+# Phylogenetic signal selection
+rm(list = setdiff(ls(), c("p1_amf","p2_amf","p1_bac","p2_bac")))
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Protist/otu/iCAMP2/output0/")
+phy_sig <- read.csv("Test.PhyloSignalSummary.csv")
+phy_sig2 <- na.omit(melt(phy_sig[(phy_sig$index=="RAsig.adj" | phy_sig$index=="MeanR"),c(2:3,6:11)], id=c("n.min","index")))
+
+p1_prot <-  ggplot(data=phy_sig2, aes(x=n.min, y=value, color=factor(variable))) +
+            geom_line(aes(linetype=factor(index))) +
+            geom_point() +
+            labs(title = "Protists-Phylogenetic signal", x="N.min", y= "Value") +
+            scale_x_continuous(breaks = seq(12,96,by=12), limits = c(12,96)) +
+            scale_color_manual(values = c("red","purple","blue","brown","darkgreen","darkblue"),
+                               label= c("pH.pearson"="pH",
+                                        "salt_content.pearson"="Salt content",
+                                        "avail_p.pearson"="Available phosphorus",
+                                        "tn.pearson"="Total nitrogen",
+                                        "tc.perason"="Total carbon",
+                                        "tp.pearson"="Total phosphorus")) +
+            annotate("text", x=20, y=0.90, label="ds = 0.2", color="red", size=5) +
+            theme_bw() +
+            guides(color=guide_legend(title="Environment factor"),
+                   linetype=guide_legend(title="Type")) +
+            theme(plot.title = element_text(size=20,face = "bold",hjust = 0.5),
+                  axis.title = element_text(size=15,face = "bold"),
+                  axis.text = element_text(size=12,color ="black",face="bold"),
+                  legend.title = element_text(size=15,face = "bold"),
+                  legend.text = element_text(size=12,face = "bold"))
+print(p1_prot)
+
+# Calculation community assembly process
+rm(list = setdiff(ls(), c("p1_amf","p2_amf","p1_bac","p2_bac","p1_prot")))
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Protist/otu/iCAMP2/output1/")
+
+result_icamp <- read.csv("Protist.ProcessImportance_EachGroup.csv")
+result_icamp2 <- result_icamp[result_icamp$Group %in% c("CK","CL","JP","YM","MH"), ]
+
+result_all2 <- result_icamp2[(result_icamp2$ds==0.2 & result_icamp2$n.min==96),c(5:10)]
+result_all2 <- melt(result_all2,id="Group")
+
+# plot
+p2_prot <-  ggplot(data=result_all2,aes(x = factor(Group, levels = c("CK","JP","CL","MH","YM")), y = as.numeric(value),fill = factor(variable))) +
+            geom_col(width = 0.6) +
+            labs(title = "Protists", x="Habitat", y= "Community assembly process (%)") +
+            scale_x_discrete(labels = c(
+              "CK" = "Bareland",
+              "CL" = "Tamarix",
+              "JP" = "Suaeda",
+              "MH" = "Cotton",
+              "YM" = "Maize"
+            )) +
+            scale_fill_manual(values = c("#3b3b3b","#5c7cbc","#d580ec","#47ced1","#fde725")) +
+            theme_bw() +
+            guides(fill=guide_legend(title="Process")) +
+            theme(plot.title = element_text(size=20,face = "bold",hjust = 0.5),
+                  axis.title = element_text(size=15,face = "bold"),
+                  axis.title.x = element_blank(),
+                  axis.text = element_text(size=12,color ="black",face="bold"),
+                  legend.title = element_text(size=15,face = "bold"),
+                  legend.text = element_text(size=12,face = "bold"))
+
+print(p2_prot)
+
+# saveRDS(p1_amf,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/icamp/AMF_phy.rda")
+# saveRDS(p2_amf,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/icamp/AMF_process.rda")
+# saveRDS(p1_bac,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/icamp/Bac_phy.rda")
+# saveRDS(p2_bac,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/icamp/Bac_process.rda")
+# saveRDS(p1_prot,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/icamp/Prot_phy.rda")
+# saveRDS(p2_prot,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/icamp/Prot_process.rda")
+
+p_phy <- p1_amf+p1_bac+p1_prot +plot_layout(guides = c("collect"))
+p_all <- p2_amf+p2_bac+p2_prot +plot_layout(guides = c("collect"))
+
+```{r,fig.align='center', fig.height=4, fig.width=16}
+
+print(p_phy)
+
+```{r,fig.align='center', fig.height=5, fig.width=16}
+
+print(p_all)
+
+
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/icamp/Phylogeny_signal.svg", p_phy, height = 4, width = 16)
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/icamp/Phylogeny_signal.pdf", p_phy, height = 4, width = 16)
+# 
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/icamp/Process.svg", p_all, height = 5, width = 16)
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/icamp/Process.pdf", p_all, height = 5, width = 16)
+
+```

@@ -1,0 +1,610 @@
+---
+title: "Fig.S2_Species accumulation"
+author: "Huanhuan Zhu"
+date: "2024-09-25"
+output: html_document
+---
+
+
+```{r,fig.align='center', fig.height=5, fig.width=10}
+#############################Fig.S2 Species accumulation##########################
+
+# load package
+library(dplyr)  #to use count/everything
+library(RColorBrewer)
+library(tidyverse)  # %>%
+library(reshape2)  # melt
+library(patchwork)
+
+### 1.AMF
+# set work dictionary
+rm(list = ls())
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/AMF/otu")
+
+my_amfbarplot <- function(a, legend, path) {
+  
+  # set color
+  m1 = brewer.pal(9, "Set1")
+  m2 = brewer.pal(12, "Set3")
+  Palette1 <-
+    c("#B2182B","#E69F00","#56B4E9","#009E73","#F0E442","#0072B2","#D55E00",
+      "#CC79A7","#CC6666","#9999CC","#66CC99","#999999","#ADD1E5")
+  Palette2 <-
+    c('blue','orange','green','yellow','red','hotpink','cyan','purple',
+      'burlywood1','skyblue','grey','#8b2578','#458b74','#f0ffff','#eeb422',
+      '#ee6aa7','#8b3a62','#cd5c5c','#ee6363','#f0e68c','#e6e6fa','#add8e6',
+      '#bfefff','#f08080','#d1eeee','#7a8b8b','#8b814c','#8b5f65','gray')
+  mix <- c(m1, Palette2, Palette1, m2)
+ 
+  # load otu table
+  otu_all0 <- read.csv("otu_amfFlattening.csV", check.names = F,header = T)
+  names(otu_all0)[1] <- "OTU.ID"
+  
+  # load taxonomy infomation and conbine with otu table
+  taxa <-read.csv("HMME.amf.OTU.ID1.csv", check.names = F,row.names = 1,header = T)
+  otu_all0 <- merge(otu_all0, taxa, by.x = "OTU.ID", by.y = "OTU.ID")
+  colnames(otu_all0)
+  
+  # check the duplicate item
+  # count(otu_all0, "genus")
+  # count(otu_all0, "family")
+  # count(otu_all0, "order")
+  # count(otu_all0, "class")
+  
+  # sum abundance according to certain taxon level
+  i = 42 + a
+  wx <- otu_all0[, i]
+  otu_all0 <- otu_all0[, c(2:26, i)] %>%
+    group_by({
+      {
+        wx
+      }
+    }) %>%
+    summarise(across(1:25, sum))
+  
+  # remove "g__" before the genus name
+  otu_all0$`<chr>` <- gsub("[a-zA-Z]__","",otu_all0$`<chr>`)
+  
+  # calculate relative abundance
+  my_function <- function(x)x / sum(x)
+  otu_all <- otu_all0
+  otu_all[, 2:26] <- apply(otu_all[, 2:26], 2, my_function)
+  
+  otu_all <- as.data.frame(otu_all)
+  colSums(otu_all[, 2:26])
+  rownames(otu_all) <- otu_all[, 1]
+  
+  # filter species with relative abundance grater than 0.001(0.1%)
+  genus_filter <- otu_all[rowMeans(otu_all[, 2:26]) > 0.001, ]
+  genus_filter$sum <- rowSums(genus_filter[, 2:26])
+  # sum and order to select top10 
+  genus_filter <- genus_filter[order(genus_filter$sum, decreasing = TRUE), ]
+  genus_top10 <- genus_filter[c(1:10), -ncol(genus_filter)]
+  
+  # remaining taxon be classfied as Others 
+  genus_top10['Others', ][, 2:26] <-1 - colSums(genus_top10[, 2:26])  
+  if (length(genus_filter[, 1]) <= 10) {
+    genus_top10 <- na.omit(genus_top10)
+  }  # if less than ten, remove NA
+  
+  #set color
+  # set last one as grey(others is grey)
+  colour <- mix[1:nrow(genus_top10)]
+  if (nrow(genus_top10) > 10) {
+    colour[length(colour)] <- 'gray'
+  }
+  
+  # make taxon name as factor,long format
+  genus_top10$Taxonomy <- factor(rownames(genus_top10), levels = rev(rownames(genus_top10)))
+  genus_ttop10 <- melt(genus_top10[, 2:27], id = 'Taxonomy')
+  
+  # load sample_metadata, combine top10 with group information
+  group0 <- read.csv("sample_metadata.csv", header = T)
+  group <- na.omit(group0)
+  group <- group0[order(group0$sample.id), ]
+  
+  genus_ttop10 <- merge(genus_ttop10, group, by.x = 'variable', by.y = "sample.id")
+  genus_tttop10 <<- aggregate(value ~ Taxonomy + plants,mean,data = genus_ttop10)
+  
+  p1 <<-
+        ggplot(genus_tttop10, aes(factor(plants,levels=c("Bare land","Suaeda","Tamarix chinensis","Cotton","Maize")), 100 * value, fill = Taxonomy)) +
+        geom_col(position = 'stack', width = 0.5)  +
+        scale_fill_manual(values =  rev(c(colour))) +
+      #  scale_x_continuous(breaks = seq(0, 6, 1),expand = c(0.03, 0.03)) +  # The distance between the left and right columns and the axis
+        labs(fill = legend) +
+        ggtitle("AMF") +
+        scale_x_discrete(labels = c(
+                                    'Bare land' = "Bareland", 
+                                    'Cotton' = "Cotton", 
+                                    'Maize' = "Maize", 
+                                    'Suaeda' = "Suaeda",
+                                    'Tamarix chinensis' = "Tamarix")) +
+        scale_y_continuous(expand = c(0, 0)) +
+        labs(x = 'Plant', y = 'Relative Abundance(%)') +
+        theme_classic() + 
+        theme_bw() +
+        theme( 
+              panel.grid = element_blank(),
+              panel.background = element_rect(color = 'black', fill = 'transparent'),
+              strip.text = element_text(size = 15),
+              panel.spacing.x = unit(0.5, "lines"),
+              panel.spacing.y = unit(0.8, "lines"),
+              plot.title = element_text(hjust = 0.5, size = 25, face = "bold"),
+              axis.text = element_text(size = 15, color= "black", face= "bold"),
+              axis.title = element_text(size = 20, face = "bold"),
+              axis.title.x = element_blank(),
+              legend.title = element_text(hjust = 0.5, size = 20, face = "bold"),
+              legend.text = element_text(size = 15, face= "bold"),
+              legend.key.size = unit(0.3, "inches"), 
+              legend.background = element_blank())
+  #if not set value*100 above, percantage can be set using scale_y_continuous(labels = scales::percent)(add %)
+  p1
+  #ggsave(path, p1, height = 5, width = 8)
+}
+
+#my_amfbarplot(0, "Kingdom", "./taxonomy/amf-Kingdom-barplot.pdf")
+#my_amfbarplot(1, "Phylum", "./taxonomy/amf-Phylum-barplot.pdf")
+my_amfbarplot(2, "Class", "./taxonomy/amf-Class-barplot.pdf")
+p_amf_class <- p1
+my_amfbarplot(3, "Order", "./taxonomy/amf-Order-barplot.pdf")
+my_amfbarplot(4, "Family", "./taxonomy/amf-Family-barplot.pdf")
+my_amfbarplot(5, "Genus", "./taxonomy/amf-Genus-barplot.pdf")
+genus_tttop10 <- aggregate(value ~ Taxonomy, data = genus_tttop10, FUN = "mean") # to calculate mean value of top taxon, which will be used in article
+p_amf_genus <- p1
+
+
+### 2.Bacteria
+rm(list = setdiff(ls(), c("p_amf_class","p_amf_genus")))
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Bacteria/otu")
+
+my_bacbarplot <- function(a, legend, title,path) {
+  
+  m1 = brewer.pal(9, "Set1")
+  m2 = brewer.pal(12, "Set3")
+  Palette1 <-
+    c("#B2182B","#E69F00","#56B4E9","#009E73","#F0E442","#0072B2","#D55E00",
+      "#CC79A7","#CC6666","#9999CC","#66CC99","#999999","#ADD1E5")
+  Palette2 <-
+    c('blue','orange','green','yellow','red','hotpink','cyan','purple',
+      'burlywood1','skyblue','grey','#8b2578','#458b74','#f0ffff','#eeb422',
+      '#ee6aa7','#8b3a62','#cd5c5c','#ee6363','#f0e68c','#e6e6fa','#add8e6',
+      '#bfefff','#f08080','#d1eeee','#7a8b8b','#8b814c','#8b5f65','gray')
+  mix <- c(m1, Palette2, Palette1, m2)
+  
+  otu_all0 <- read.csv("otu_bacteriaFlattening.csv", check.names = F,header = T)
+  names(otu_all0)[1] <- "OTU.ID"
+  
+  taxa <-read.csv("HMME.bact.OTU.ID1.csv", check.names = F,row.names = 1,header = T)
+  otu_all0 <- merge(otu_all0, taxa, by.x = "OTU.ID", by.y = "OTU.ID")
+  names(otu_all0)[38:43] <-
+    c(
+      "Bacteria.phylum",
+      "Bacteria.class",
+      "Bacteria.order",
+      "Bacteria.family",
+      "Bacteria.genus",
+      "Bacteria.species")
+  
+  # count(otu_all0, "Bacteria.phylum")
+  # count(otu_all0, "Bacteria.class")
+  # count(otu_all0, "Bacteria.order")
+  # count(otu_all0, "Bacteria.family")
+  # count(otu_all0, "Bacteria.genus")
+  # count(otu_all0, "Bacteria.species")
+  
+  i = 38 + a
+  wx <- otu_all0[, i]
+  otu_all0 <- otu_all0[, c(2:26, i)] %>%
+    group_by({
+      {
+        wx
+      }
+    }) %>%
+    summarise(across(1:25, sum))  
+  
+  if(a==4)(otu_all0$`<chr>` <- gsub("-","-\n",otu_all0$`<chr>`))
+  
+  my_function <- function(x) x / sum(x)
+  otu_all <- otu_all0
+  otu_all[, 2:26] <- apply(otu_all[, 2:26], 2, my_function)
+  
+  otu_all <- as.data.frame(otu_all)
+  colSums(otu_all[, 2:26])
+  rownames(otu_all) <- otu_all[, 1]
+  
+  genus_filter <- otu_all[rowMeans(otu_all[, 2:26]) > 0.001, ]
+  genus_filter$sum <- rowSums(genus_filter[, 2:26])
+  genus_filter <- genus_filter[order(genus_filter$sum, decreasing = TRUE),]
+
+  if (is.element("_", rownames(genus_filter)[1:10]) == TRUE) {
+    dup <- c(1:11)[!c(1:11) %in% which(rownames(genus_filter) == "_")]
+    genus_top10 <- genus_filter[dup,-ncol(genus_filter)]
+  } else{
+    genus_top10 <- genus_filter[c(1:10),-ncol(genus_filter)]
+  }
+
+  genus_top10['Others',][, 2:26] <-
+    1 - colSums(genus_top10[, 2:26])
+  if (length(genus_filter[, 1]) <= 10) {
+    genus_top10 <- na.omit(genus_top10)
+  }
+  
+  colour <- mix[1:nrow(genus_top10)]
+  if (nrow(genus_top10) > 10) {
+    colour[length(colour)] <- 'gray'
+  }
+
+  genus_top10$Taxonomy <-factor(rownames(genus_top10), levels = rev(rownames(genus_top10)))
+  genus_ttop10 <- melt(genus_top10[, 2:27], id = 'Taxonomy')
+  
+  group0 <- read.csv("sample_metadata.csv", header = T)
+  group <- na.omit(group0)
+  group <- group0[order(group0$sample.id), ]
+  
+  genus_ttop10 <- merge(genus_ttop10, group, by.x = 'variable', by.y = "sample.id")
+  genus_tttop10 <<- aggregate(value ~ Taxonomy + plants, mean,data = genus_ttop10)
+
+  p1 <<-
+        ggplot(genus_tttop10, aes(factor(plants,levels=c("Bare land","Suaeda","Tamarix chinensis","Cotton","Maize")), 100 * value, fill = Taxonomy,20)) +
+        geom_col(position = 'stack', width = 0.5)  +
+        scale_fill_manual(values =  rev(c(colour))) +
+        #scale_x_continuous(breaks = seq(0, 6, 1),expand = c(0.03, 0.03)) + 
+        labs(fill = legend) +
+        ggtitle(title) +
+        scale_x_discrete(labels = c(
+                                    'Bare land' = "Bareland", 
+                                    'Cotton' = "Cotton", 
+                                    'Maize' = "Maize", 
+                                    'Suaeda' = "Suaeda",
+                                    'Tamarix chinensis' = "Tamarix")) +
+        scale_y_continuous(expand = c(0, 0)) +
+        labs(x = 'Plant', y = 'Relative Abundance(%)') +
+        theme_classic() + 
+        theme_bw() +
+        theme(
+              panel.grid = element_blank(),
+              panel.background = element_rect(color = 'black', fill = 'transparent'),
+              strip.text = element_text(size = 15),
+              panel.spacing.x = unit(0.5, "lines"),
+              panel.spacing.y = unit(0.8, "lines"),
+              plot.title = element_text(hjust = 0.5, size = 25, face = "bold"),
+              axis.text = element_text(size = 15, color= "black", face= "bold"),
+              axis.title = element_text(size = 20, face = "bold"),
+              axis.title.x = element_blank(),
+              legend.title = element_text(hjust = 0.5, size = 20, face = "bold"),
+              legend.text = element_text(size = 15, face= "bold"),
+              legend.key.size = unit(0.3, "inches"), 
+              legend.background = element_blank())
+  p1
+  #ggsave(path, p1,height = 5.5, width = 11)
+}
+
+my_bacbarplot(0, "Phylum","Bacteria", "./taxonomy/bac-Phylum-barplot.pdf")
+p_bac_phylum <- p1
+genus_tttop10 <- aggregate(value ~ Taxonomy, data = genus_tttop10, FUN = "mean")
+my_bacbarplot(1, "Class", "Bacteria","./taxonomy/bac-Class-barplot.pdf")
+my_bacbarplot(2, "Order", "Bacteria","./taxonomy/bac-Order-barplot.pdf")
+my_bacbarplot(3, "Family", "Bacteria","./taxonomy/bac-Family-barplot.pdf")
+my_bacbarplot(4, "Genus", "Bacteria","./taxonomy/bac-Genus-barplot2.pdf")
+p_bac_genus <- p1
+my_bacbarplot(5, "Species", "Bacteria","./taxonomy/bac-Species-barplot.pdf")
+
+
+### 3.Fungi
+
+rm(list = setdiff(ls(), c("p_amf_class", "p_amf_genus", "p_bac_phylum", "p_bac_genus")))
+
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Fungi/otu")
+my_fungbarplot <- function(a, legend, title) {
+  
+  m1 = brewer.pal(9, "Set1")
+  m2 = brewer.pal(12, "Set3")
+  
+  Palette1 <-
+    c("#B2182B","#E69F00","#56B4E9","#009E73","#F0E442","#0072B2","#D55E00",
+      "#CC79A7","#CC6666","#9999CC","#66CC99","#999999","#ADD1E5")
+  Palette2 <-
+    c('blue','orange','green','yellow','red','hotpink','cyan','purple',
+      'burlywood1','skyblue','grey','#8b2578','#458b74','#f0ffff','#eeb422',
+      '#ee6aa7','#8b3a62','#cd5c5c','#ee6363','#f0e68c','#e6e6fa','#add8e6',
+      '#bfefff','#f08080','#d1eeee','#7a8b8b','#8b814c','#8b5f65','gray')
+  mix <- c(m1, Palette2, Palette1, m2)
+  
+  otu_all0 <- read.csv("otu_fungiFlattening.csv", check.names = F,header = T)
+  names(otu_all0)[1] <- "OTU.ID"
+  
+  taxa <- read.csv("HMME.fung.OTU.ID1.csv", check.names = F,row.names = 1,header = T)
+  otu_all0 <- merge(otu_all0, taxa, by.x = "OTU.ID", by.y = "OTU.ID")
+  colnames(otu_all0)
+  names(otu_all0)[38:43] <-
+    c(
+      "Fungi.phylum",
+      "Fungi.class",
+      "Fungi.order",
+      "Fungi.family",
+      "Fungi.genus",
+      "Fungi.species"
+    )
+  
+  # count(otu_all0, Fungi.phylum)
+  # count(otu_all0, Fungi.class)
+  # count(otu_all0, Fungi.order)
+  # count(otu_all0, Fungi.family)
+  # count(otu_all0, Fungi.genus)
+  # count(otu_all0, Fungi.species)
+  
+  i = 38 + a
+  wx <- otu_all0[, i]
+  otu_all0 <- otu_all0[, c(2:26, i)] %>%
+    group_by({
+      {
+        wx
+      }
+    }) %>%
+    summarise(across(1:25, sum))
+  
+  otu_all0$`<chr>` <- gsub("[a-zA-Z]__","",otu_all0$`<chr>`)
+  otu_all0$`<chr>` <- gsub("_gen_Incertae_sedis","",otu_all0$`<chr>`)
+  
+  my_function <- function(x) x / sum(x)
+  otu_all <- otu_all0
+  otu_all[, 2:26] <- apply(otu_all[, 2:26], 2, my_function)
+  
+  otu_all <- as.data.frame(otu_all)
+  colSums(otu_all[, 2:26])
+  rownames(otu_all) <- otu_all[, 1]
+  
+  genus_filter <- otu_all[rowMeans(otu_all[, 2:26]) > 0.001, ]
+  genus_filter$sum <- rowSums(genus_filter[, 2:26])
+  genus_filter <- genus_filter[order(genus_filter$sum, decreasing = TRUE),]
+
+  if (is.element("_", rownames(genus_filter)[1:10]) == TRUE) {
+    dup <- c(1:11)[!c(1:11) %in% which(rownames(genus_filter) == "_")]
+    genus_top10 <- genus_filter[dup,-ncol(genus_filter)]
+  } else{
+    genus_top10 <- genus_filter[c(1:10),-ncol(genus_filter)]
+  }
+
+  genus_top10['Others',][, 2:26] <-
+    1 - colSums(genus_top10[, 2:26])
+  if (length(genus_filter[, 1]) <= 10) {
+    genus_top10 <- na.omit(genus_top10)
+  }
+  
+
+  colour <- mix[1:nrow(genus_top10)]
+  if (nrow(genus_top10) > 10) {
+    colour[length(colour)] <- 'gray'
+  }
+  
+  genus_top10$Taxonomy <-
+    factor(rownames(genus_top10), levels = rev(rownames(genus_top10)))
+  genus_ttop10 <- melt(genus_top10[, 2:27], id = 'Taxonomy')
+  
+  group0 <- read.csv("sample_metadata.csv", header = T)
+  group <- na.omit(group0)
+  group <- group0[order(group0$sample.id), ]
+  
+  genus_ttop10 <- merge(genus_ttop10, group, by.x = 'variable', by.y = "sample.id")
+  
+  genus_tttop10 <<- aggregate(value ~ Taxonomy + plants, mean, data = genus_ttop10)
+
+  
+  p1 <<-
+        ggplot(genus_tttop10, aes(factor(plants,levels=c("Bare land","Suaeda","Tamarix chinensis","Cotton","Maize")), 100 * value, fill = Taxonomy)) +
+        geom_col(position = 'stack', width = 0.5)  +
+        scale_fill_manual(values =  rev(c(colour))) +
+        #scale_x_continuous(breaks = seq(0, 6, 1),expand = c(0.03, 0.03)) +
+        labs(fill = legend) +
+        ggtitle("Fungi") +
+        scale_x_discrete(labels = c(
+                                    'Bare land' = "Bareland", 
+                                    'Cotton' = "Cotton", 
+                                    'Maize' = "Maize", 
+                                    'Suaeda' = "Suaeda",
+                                    'Tamarix chinensis' = "Tamarix")) +
+        scale_y_continuous(expand = c(0, 0)) +
+        labs(x = 'Plant', y = 'Relative Abundance(%)') +
+        theme_classic() + 
+        theme_bw() +
+        theme(
+              panel.grid = element_blank(),
+              panel.background = element_rect(color = 'black', fill = 'transparent'),
+              strip.text = element_text(size = 15),
+              panel.spacing.x = unit(0.5, "lines"),
+              panel.spacing.y = unit(0.8, "lines"),
+              plot.title = element_text(hjust = 0.5, size = 25, face = "bold"),
+              axis.text = element_text(size = 15, color= "black", face= "bold"),
+              axis.title = element_text(size = 20, face = "bold"),
+              axis.title.x = element_blank(),
+              legend.title = element_text(hjust = 0.5, size = 20, face = "bold"),
+              legend.text = element_text(size = 15, face= "bold"),
+              legend.key.size = unit(0.3, "inches"), 
+              legend.background = element_blank())
+
+  p1
+  #ggsave(title, p1, height = 5.5, width = 11)
+}
+
+my_fungbarplot(0, "Phylum", "./taxonomy/fung-Phylum-barplot.pdf")
+p_fung_phylum <- p1
+genus_tttop10 <- aggregate(value ~ Taxonomy, data = genus_tttop10, FUN = "mean")
+my_fungbarplot(1, "Class", "./taxonomy/fung-Class-barplot.pdf")
+my_fungbarplot(2, "Order", "./taxonomy/fung-Order-barplot.pdf")
+my_fungbarplot(3, "Family", "./taxonomy/fung-Family-barplot.pdf")
+my_fungbarplot(4, "Genus", "./taxonomy/fung-Genus-barplot.pdf")
+p_fung_genus <- p1
+my_fungbarplot(5, "Species", "./taxonomy/fung-Species-barplot.pdf")
+
+
+### 4.Protist
+rm(list = setdiff(ls(), c("p_amf_class", "p_amf_genus", "p_bac_phylum", "p_bac_genus","p_fung_phylum", "p_fung_genus")))
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Protist/otu")
+
+my_protbarplot <- function(a, legend, path) {
+  
+    m1 = brewer.pal(9, "Set1")
+    m2 = brewer.pal(12, "Set3")
+    
+    Palette1 <-
+      c("#B2182B","#E69F00","#56B4E9","#009E73","#F0E442","#0072B2","#D55E00",
+        "#CC79A7","#CC6666","#9999CC","#66CC99","#999999","#ADD1E5")
+    Palette2 <-
+      c('blue','orange','green','yellow','red','hotpink','cyan','purple',
+        'burlywood1','skyblue','grey','#8b2578','#458b74','#f0ffff','#eeb422',
+        '#ee6aa7','#8b3a62','#cd5c5c','#ee6363','#f0e68c','#e6e6fa','#add8e6',
+        '#bfefff','#f08080','#d1eeee','#7a8b8b','#8b814c','#8b5f65','gray')
+    mix <- c(m1, Palette2, Palette1, m2)
+  
+  otu_all0 <- read.csv("otu_protistFlattening.csv", check.names = F,header = T)
+  names(otu_all0)[1] <- "OTU.ID"
+  
+  taxa <-read.csv("HMME.prot.OTU.ID1.csv", check.names = F,row.names = 1,header = T)
+  otu_all0 <- merge(otu_all0, taxa, by.x = "OTU.ID", by.y = "OTU.ID")
+  colnames(otu_all0)
+  names(otu_all0)[38:44] <-
+    c(
+      "Protist.domain",
+      "Protist.phylum",
+      "Protist.class",
+      "Protist.order",
+      "Protist.family",
+      "Protist.genus",
+      "Protist.species"
+    )
+  
+  # count(otu_all0, Protist.domain)
+  # count(otu_all0, Protist.phylum)
+  # count(otu_all0, Protist.class)
+  # count(otu_all0, Protist.order)
+  # count(otu_all0, Protist.family)
+  # count(otu_all0, Protist.genus)
+  # count(otu_all0, Protist.species)
+  
+  i = 38 + a
+  wx <- otu_all0[, i]
+  otu_all0 <- otu_all0[, c(2:26, i)] %>%
+    group_by({
+      {
+        wx
+      }
+    }) %>%
+    summarise(across(1:25, sum))
+  
+  otu_all0$`<chr>` <- gsub("[a-zA-Z]:","",otu_all0$`<chr>`) 
+  otu_all0$`<chr>` <- gsub("-","-\n",otu_all0$`<chr>`)
+  
+  my_function <- function(x) x / sum(x)
+  otu_all <- otu_all0
+  otu_all[, 2:26] <- apply(otu_all[, 2:26], 2, my_function)
+  
+  otu_all <- as.data.frame(otu_all)
+  colSums(otu_all[, 2:26])
+  rownames(otu_all) <- otu_all[, 1]
+  
+  
+  genus_filter <- otu_all[rowMeans(otu_all[, 2:26]) > 0.001, ]
+  genus_filter$sum <- rowSums(genus_filter[, 2:26])
+  
+  genus_filter <-genus_filter[order(genus_filter$sum, decreasing = TRUE), ]
+  
+  genus_top10 <- genus_filter[c(1:10), -ncol(genus_filter)]
+  
+  genus_top10['Others', ][, 2:26] <- 1 - colSums(genus_top10[, 2:26])
+  if (length(genus_filter[, 1]) <= 10) {
+    genus_top10 <- na.omit(genus_top10)
+  }
+  
+  
+  colour <- mix[1:nrow(genus_top10)]
+  
+  if (nrow(genus_top10) > 10) {
+    colour[length(colour)] <- 'gray'
+  }
+  
+  
+  genus_top10$Taxonomy <- factor(rownames(genus_top10), levels = rev(rownames(genus_top10)))
+  genus_ttop10 <- melt(genus_top10[, 2:27], id = 'Taxonomy')
+  
+  
+  group0 <- read.csv("sample_metadata.csv", header = T)
+  group <- na.omit(group0)
+  group <- group0[order(group0$sample.id), ]
+  
+  genus_ttop10 <- merge(genus_ttop10, group, by.x = 'variable', by.y = "sample.id")
+  genus_tttop10 <<- aggregate(value ~ Taxonomy + plants, mean, data = genus_ttop10)
+  
+  p1 <<-
+        ggplot(genus_tttop10, aes(factor(plants,levels=c("Bare land","Suaeda","Tamarix chinensis","Cotton","Maize")), 100 * value, fill = Taxonomy)) +
+        geom_col(position = 'stack', width = 0.5)  +
+        scale_fill_manual(values =  rev(c(colour))) +
+        #scale_x_continuous(breaks = seq(0, 6, 1),expand = c(0.03, 0.03)) +
+        labs(fill = legend) +
+        ggtitle("Protists") +
+        scale_x_discrete(labels = c(
+                                    'Bare land' = "Bareland", 
+                                    'Cotton' = "Cotton", 
+                                    'Maize' = "Maize", 
+                                    'Suaeda' = "Suaeda",
+                                    'Tamarix chinensis' = "Tamarix")) +
+        scale_y_continuous(expand = c(0, 0)) +
+        labs(x = 'Plant', y = 'Relative Abundance(%)') +
+        theme_classic() + 
+        theme_bw() +
+        theme(
+              panel.grid = element_blank(),
+              panel.background = element_rect(color = 'black', fill = 'transparent'),
+              strip.text = element_text(size = 15),
+              panel.spacing.x = unit(0.5, "lines"),
+              panel.spacing.y = unit(0.8, "lines"),
+              plot.title = element_text(hjust = 0.5, size = 25, face = "bold"),
+              axis.text = element_text(size = 15, color= "black", face= "bold"),
+              axis.title = element_text(size = 20, face = "bold"),
+              axis.title.x = element_blank(),
+              legend.title = element_text(hjust = 0.5, size = 20, face = "bold"),
+              legend.text = element_text(size = 15, face= "bold"),
+              legend.key.size = unit(0.3, "inches"), 
+              legend.background = element_blank())
+  
+  p1
+  #ggsave(path, p1, height = 5.5, width = 11)
+}
+
+
+
+my_protbarplot(0, "Domain", "./taxonomy/prot-Domain-barplot.pdf")
+my_protbarplot(1, "Phylum", "./taxonomy/prot-Phylum-barplot.pdf")
+genus_tttop10 <- aggregate(value ~ Taxonomy, data = genus_tttop10, FUN = "mean")
+p_prot_phylum <- p1
+my_protbarplot(2, "Class", "./taxonomy/prot-Class-barplot.pdf")
+my_protbarplot(3, "Order", "./taxonomy/prot-Order-barplot.pdf")
+my_protbarplot(4, "Family", "./taxonomy/prot-Family-barplot.pdf")
+my_protbarplot(5, "Genus", "./taxonomy/prot-Genus-barplot.pdf")
+p_prot_genus <- p1
+my_protbarplot(6, "Species", "./taxonomy/prot-Species-barplot.pdf")
+
+
+# saveRDS(p_amf_class,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/taxonomy/amf_class.rda")
+# saveRDS(p_amf_genus,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/taxonomy/amf_genus.rda")
+# saveRDS(p_bac_phylum,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/taxonomy/bac_phylum.rda")
+# saveRDS(p_bac_genus,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/taxonomy/bac_genus.rda")
+# saveRDS(p_fung_phylum,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/taxonomy/fung_phylum.rda")
+# saveRDS(p_fung_genus,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/taxonomy/fung_genus.rda")
+# saveRDS(p_prot_phylum,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/taxonomy/prot_phylum.rda")
+# saveRDS(p_prot_genus,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/taxonomy/prot_genus.rda")
+
+```{r,fig.align='center', fig.height=20, fig.width=18}
+
+p_all <- ((p_amf_class/p_bac_phylum/p_fung_phylum/p_prot_phylum)|(p_amf_genus/p_bac_genus/p_fung_genus/p_prot_genus)) #+
+  # plot_annotation(tag_levels = 'a') &
+  # theme(plot.tag = element_text(size = 30, face = "bold"))
+p_all
+
+# saveRDS(p_all,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/taxonomy/p_all.rda")
+# 
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/taxonomy/taxonomy.svg", p_all, height = 20, width = 18)
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/taxonomy/taxonomy.pdf", p_all, height = 20, width = 18)
+
+```
+
+```

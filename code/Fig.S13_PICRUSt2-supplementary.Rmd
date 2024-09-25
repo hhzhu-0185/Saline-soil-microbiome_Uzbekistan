@@ -1,0 +1,434 @@
+---
+title: "Fig.S13_PICRUSt2-supplementary"
+author: "Huanhuan Zhu"
+date: "2024-09-25"
+output: html_document
+---
+
+```{r,fig.align='center', fig.height=9, fig.width=18}
+#############################Fig.S13 PICRUSt2-supplementary##########################
+
+library(ggplot2)
+library(tidyverse)
+library(patchwork)
+library(ggh4x)
+library(reshape2)
+library(pals)
+library(RColorBrewer)
+
+rm(list=ls())
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Bacteria/otu/picrust2/out2/")
+
+# read group
+group <- read.csv("sample_metadata.csv", header = T)
+#group <- na.omit(group)
+group_MC <- group %>%
+  filter(country == "Uzbekistan",plants=="Maize"|plants=="Cotton")
+group_MC$type <- rep("MC",nrow(group_MC))
+
+group_TS <- group %>%
+  filter(country == "Uzbekistan",plants=="Tamarix chinensis"|plants=="Suaeda")
+group_TS$type <- rep("TS",nrow(group_TS))
+
+group2 <- rbind(group_MC,group_TS)
+names(group2)[1] = "sample_name"
+
+# read kegg htext
+kegg <- read.table("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Bacteria/otu/picrust2/KEGG/kegg htext.txt", 
+                   sep = "\t",fill = TRUE,header = T,quote = "")
+
+# read KO
+ko_abundance <- read.table("KO_metagenome_out/pred_metagenome_unstrat.tsv", header = T, check.names = F)
+
+# filter data
+ko_abundance <- ko_abundance[,colnames(ko_abundance) %in% c("function",group2$sample_name)]
+abundance = ko_abundance %>% column_to_rownames("function") 
+ko_abundance <-ko_abundance[rowSums(abundance) != 0,]
+
+# annotate KO using kegg htext
+ko_abundance2 <- merge(kegg,ko_abundance,by.x = "KO",by.y="function")
+table(duplicated(paste0(ko_abundance2$pathway_id,ko_abundance2$KO))) 
+
+# summarize by pathway
+ko_abundance3 <- ko_abundance2[,c("pathway_id",group2$sample_name)]
+ko_abundance4 <- aggregate(. ~ pathway_id, data = ko_abundance3, FUN = sum)
+
+# annotate  levels of pathway
+ko_abundance5 <- merge(ko_abundance4,kegg[,c("pathway_id","level1","level2","level3")],
+                       by.x="pathway_id",by.y="pathway_id")
+table(duplicated(ko_abundance5$pathway_id)) 
+ko_abundance5 <- ko_abundance5[-which(duplicated(ko_abundance5$pathway_id)),]
+
+# remove human diseases and level1 & level3
+ko_abundance5 <- ko_abundance5 %>%
+  filter(level1 != "Human Diseases" & level1 != "Organismal Systems"& level2 != "Cellular community - eukaryotes") %>%
+  select(-level1, -level3)  
+
+# calculate percentage, mean, and sd by level 2
+ko_abundance6 <- aggregate(.~level2,ko_abundance5[,2:22],FUN="sum")
+
+ko_abundance6[, 2:21]  <- apply(ko_abundance6[, 2:21], 2, function(x) x / sum(x)) 
+
+ko_abundance6$MC <- rowMeans(ko_abundance6[, 2:11]) 
+ko_abundance6$TS <- rowMeans(ko_abundance6[, 12:21])
+
+ko_abundance6$MC_Sd <- apply(ko_abundance6[, 2:11], 1, sd)
+ko_abundance6$TS_Sd <- apply(ko_abundance6[, 12:21], 1, sd)
+
+# order of level2
+ko_abundance6$order <- ko_abundance6$TS-ko_abundance6$MC
+order <- ko_abundance6$level2[order(ko_abundance6$order,decreasing = T)]
+
+# points where TS>MC & TS<MC
+min_pos <- min(ko_abundance6[ko_abundance6$order >0,]$order)
+order_pos <- ko_abundance6[ko_abundance6$order==min_pos,]$level2
+
+max_neg <- max(ko_abundance6[ko_abundance6$order <0,]$order)
+order_neg <- ko_abundance6[ko_abundance6$order==max_neg,]$level2
+
+# format transform
+data1 <- melt(ko_abundance6[, c("MC", "TS","level2")],id=c("level2"))
+data1$id <- paste0(data1$level2,data1$variable)
+
+data2 <- melt(ko_abundance6[, c("TS_Sd","MC_Sd","level2")],id=c("level2"))
+data2$variable <- gsub("TS_Sd","TS",data2$variable)
+data2$variable <- gsub("MC_Sd","MC",data2$variable)
+data2$id <- paste0(data2$level2,data2$variable)
+
+# merge mean and sd
+data <- merge(data1,data2,by="id")
+data <- data[,c(2:4,7)]
+names(data) <- c("level2","type","mean","sd")
+
+# t test
+p <- data.frame()
+for (i in 1:nrow(ko_abundance6)){
+  t_test_result <- t.test(ko_abundance6[i,2:11],ko_abundance6[i,12:21])
+  p_tem <- data.frame(ko_abundance6$level2[i],t_test_result$p.value)
+  p <- rbind(p,p_tem)
+}
+
+p$p.adj <- p.adjust(p$t_test_result.p.value, method = "BH")  # p鍊肩煫姝?
+
+# asterisk
+p <- p %>%
+  mutate(asterisk = ifelse(p.adj < 0.001, "***",
+                           ifelse(p.adj < 0.01, "**",
+                                  ifelse(p.adj < 0.05, "*", ""))))
+names(p) <- c("level2","p","p.adj","asterisk")
+
+# position of p value and asterisk
+data.p <- aggregate((data$mean+data$sd)~level2,data,FUN="mean")  
+p.data <- merge(p,data.p,by="level2")
+
+p.data$type <- "MC"
+p.data1 <- p.data
+p.data1$type <- "TS"
+p.data <- rbind(p.data,p.data1)
+
+names(p.data)[5] <- "x"
+
+data$level2 <- factor(data$level2,levels = order)
+midpoint <- mean(as.numeric(c(which(levels(data$level2)==order_pos),which(levels(data$level2)==order_neg))))
+
+p1 <- ggplot(data = data,aes(x=mean,y=level2,fill=factor(type))) +
+      geom_col(position = "dodge")+
+      geom_errorbar(aes(xmin = mean-sd, xmax = mean+sd,width=0.6),position = position_dodge(width = 1)) +
+      scale_fill_manual(name="Habitat",
+                        values = c("MC"="#008000","TS"="#FFA500"),
+                        label= c("MC"="Farmland","TS"="Wildland")) +
+      geom_hline(yintercept = midpoint, linetype = "dashed", color = "#FFA500") +
+      labs(x="Mean proportion (%)",y="",title = "Function abundance") +
+      geom_text(p.data,mapping=aes(x=x+0.012,y=level2,label=as.character(asterisk)),size=5,col="#FFA500",vjust=0.7) +  # vjust涓烘鍚戜笅璋冩暣y杞?
+      annotate(geom = "text",x=0.12,y=midpoint+1,label="Farmland > Wildland",size=4,color="#FFA500") +
+      annotate(geom = "text",x=0.12,y=midpoint-1,label="Wildland > Farmland",size=4,color="#FFA500") +
+      theme_bw() + 
+      theme(plot.margin = margin(0, 0, 0, 0, "pt"),
+            #axis.text.y = element_blank(),
+            plot.title = element_text(size=20,face = "bold", hjust = 0.5),
+            axis.text = element_text(color = "black",size = 12,face = "bold"),
+            axis.title.x = element_text(color="black",size = 15,face = "bold"),
+            axis.title.y = element_blank(),  # 姝ゅ涓嶄负blank浼氬鑷村浘鐗囧乏杈规湁绌烘牸
+            axis.ticks.y = element_blank(),
+            legend.title = element_text(size = 15,face = "bold"),
+            legend.text = element_text(size = 12,face = "bold"),
+            #legend.key.size = unit(0.3,"cm"),
+            legend.position = c(0.8,0.15),  # c(x,y)
+            legend.background = element_rect(fill = "transparent", color = NA))
+print(p1)
+
+# 2. Differentail analysis using DEseq2
+
+library(DESeq2)
+library(pheatmap) 
+
+rawdata <- ko_abundance4  # pathway
+rownames(rawdata) <- rawdata$pathway_id
+diffcount <- rawdata[,2:21]
+
+diffcount <- diffcount[,group2$sample_name]
+
+head(diffcount)
+
+# dds matrix
+dds <- DESeqDataSetFromMatrix(countData = round(diffcount), colData = group2, design = ~type)
+
+# nomalize of dds
+dds <- DESeq(dds)
+
+# extract results
+res <- results(dds,contrast = c("type","TS","MC"))  
+
+diff_res <- as.data.frame(res)
+diff_res$pathway_id <- rownames(diff_res)
+diff_res<- na.omit(diff_res)
+#write.csv(diff_res,file = paste0("TS","-","MC","_DESeq2_results.csv"),row.names = FALSE)
+
+# add change column
+#log2FoldChange = 0.5
+#P.Value = 0.05
+#k1 <- (diff_res$padj < P.Value) & (diff_res$log2FoldChange < -log2FoldChange)
+#k2 <- (diff_res$padj < P.Value) & (diff_res$log2FoldChange > log2FoldChange)
+#diff_res <- mutate(diff_res, change = ifelse(k1, "down", ifelse(k2, "up", "stable")))
+#table(diff_res$change)
+
+#diff_res$change <- factor(diff_res$change,levels=c("up", "stable", "down"))
+diff_res<- merge(diff_res,kegg[,c("pathway_id","level2","level1")],by="pathway_id")  # 缁撴灉涓巏egg娉ㄩ噴鍚堝苟
+diff_res <- diff_res %>%
+  filter(level1 != "Human Diseases" & level1 != "Organismal Systems"& level2 != "Cellular community - eukaryotes") %>%
+  select(-level1)
+
+# remove duplicate rows
+diff_res$id <- paste0(diff_res$pathway_id,diff_res$level2)  
+diff_res <- diff_res[!duplicated(diff_res$id),]
+
+diff_res <- diff_res[diff_res$padj < 0.05,]
+diff_res <- mutate(diff_res, change = ifelse(diff_res$log2FoldChange > 0 ,"wildland", "farmland"))
+
+diff_res_1 <- diff_res[1:4,]
+diff_res_1$level2 <- as.character(unique(data$level2)[!(unique(data$level2) %in% unique(diff_res$level2))])
+diff_res_1[,2:7] = 0
+diff_res <- rbind(diff_res,diff_res_1)
+diff_res$level2 <- factor(diff_res$level2, levels = levels(data$level2))
+
+p2 <- ggplot(data = diff_res,aes(x=log2FoldChange,y=factor(level2,levels = order),color=factor(change))) +
+      geom_point(position = position_jitter(height = 0.2),size=2, alpha=0.5) + 
+      #geom_point(size=1, alpha=0.5) +
+      scale_color_manual(name="Significance",
+                         values = c( "wildland"="#FFA500", "farmland"="#008000"),
+                         label= c("wildland"="Wildland","farmland"="Farmland")) +
+      geom_hline(yintercept = midpoint, linetype = "dashed", color = "#FFA500") +
+      labs(x="Log2 fold change",y="",title = "Function differential analysis") +
+      #geom_text(p.data,mapping=aes(x=x+0.012,y=level2,label=as.character(asterisk)),col="#FFA500",vjust=0.7) + 
+      #annotate(geom = "text",x=0.12,y=midpoint+1,label="Wildland > Farmland",size=2.5,color="#FFA500") +
+      #annotate(geom = "text",x=0.12,y=midpoint-1,label="Farmland < Wildland",size=2.5,color="#FFA500") +
+      theme_bw() +
+      theme(plot.margin = margin(0, 0, 0, 0, "pt"),
+            #axis.text.y = element_blank(),
+            plot.title = element_text(size=20,face = "bold", hjust = 0.5),
+            axis.text = element_text(color = "black",size = 12,face = "bold"),
+            axis.title.x = element_text(color="black",size = 15,face = "bold"),
+            axis.text.y = element_blank(), 
+            axis.title.y = element_blank(),
+            axis.ticks.y = element_blank(),
+            legend.title = element_text(size = 15,face = "bold"),
+            legend.text = element_text(size = 12,face = "bold"),
+            #legend.key.size = unit(0.3,"cm"),
+            legend.position = c(0.8,0.15),  # c(x,y)
+            legend.background = element_rect(fill = "transparent", color = NA))
+print(p2)
+
+
+p2_1 <- ggplot(data = diff_res,aes(x=log2FoldChange,y=factor(level2,levels = order),color=factor(change))) +
+        geom_point(position = position_jitter(height = 0.2),size=2, alpha=0.5) + 
+        #geom_point(size=1, alpha=0.5) +
+        scale_color_manual(name="Significance",
+                           values = c( "wildland"="#FFA500", "farmland"="#008000"),
+                           label= c("wildland"="Wildland","farmland"="Farmland")) +
+        geom_hline(yintercept = midpoint, linetype = "dashed", color = "#FFA500") +
+        labs(x="Log2 fold change",y="",title = "Function differential analysis") +
+        #geom_text(p.data,mapping=aes(x=x+0.012,y=level2,label=as.character(asterisk)),col="#FFA500",vjust=0.7) + 
+        #annotate(geom = "text",x=0.12,y=midpoint+1,label="Wildland > Farmland",size=2.5,color="#FFA500") +
+        #annotate(geom = "text",x=0.12,y=midpoint-1,label="Farmland < Wildland",size=2.5,color="#FFA500") +
+        theme_bw() +
+        theme(plot.margin = margin(0, 0, 0, 0, "pt"),
+              #axis.text.y = element_blank(),
+              plot.title = element_text(size=20,face = "bold", hjust = 0.5),
+              axis.text = element_text(color = "black",size = 12,face = "bold"),
+              axis.title.x = element_text(color="black",size = 15,face = "bold"),
+              axis.title.y = element_blank(), 
+              axis.ticks.y = element_blank(),
+              legend.title = element_text(size = 15,face = "bold"),
+              legend.text = element_text(size = 12,face = "bold"),
+              #legend.key.size = unit(0.3,"cm"),
+              legend.position = c(0.8,0.15),  # c(x,y)
+              legend.background = element_rect(fill = "transparent", color = NA))
+print(p2_1)
+
+
+# 3. otu contribution
+
+# read otu table and KO table
+ko_otu <- read.table("KO_predicted.tsv",header = T)
+
+otu_phylum <- read.csv("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Bacteria/otu/HMME.bact.OTU.ID1.csv")
+
+
+otu_table <- read.csv("../HMME.bact1.OTU.picrust.csv",row.names = 1)
+otu_table <- otu_table[,group2$sample_name]
+otu_table <- otu_table[rowSums(otu_table) != 0,]
+
+# summarize by phylum
+ko_otu <- ko_otu[ko_otu$sequence %in% rownames(otu_table),]
+ko_otu <- merge(ko_otu,otu_phylum[,c("V1","V5_2")],by.x="sequence",by.y="V1")
+ko_phylum <- aggregate(.~V5_2,ko_otu[,2:ncol(ko_otu)],FUN="sum")
+rownames(ko_phylum) <- ko_phylum$V5_2
+
+# select top10 phylum
+ko_phylum$sum <- rowSums(ko_phylum[,!(colnames(ko_phylum) %in%c("V1","V5_2"))])
+ko_phylum <- ko_phylum[order(ko_phylum$sum,decreasing =T),]
+ko_phylum_top10 <- ko_phylum[1:10,]
+
+table(colnames(ko_phylum_top10[,!(colnames(ko_phylum_top10) %in%c("V1","V5_2"))])==
+        colnames(ko_phylum[,!(colnames(ko_phylum) %in%c("V1","V5_2"))]) ) 
+
+ko_phylum <- rbind( ko_phylum_top10[,!(colnames(ko_phylum_top10) %in%c("V1","V5_2"))], 
+                    (colSums(ko_phylum[,!(colnames(ko_phylum) %in%c("V1","V5_2"))]) - 
+                       colSums(ko_phylum_top10[,!(colnames(ko_phylum_top10) %in%c("V1","V5_2"))])) )
+rownames(ko_phylum)[11] <- "Others"
+ko_phylum1 <- as.data.frame(t(ko_phylum[,!(colnames(ko_phylum) %in%c("V1","V5_2","sum"))]))
+ko_phylum1$KO <- rownames(ko_phylum1)
+
+
+ko_phylum1 <- merge(ko_phylum1,kegg[,c("KO","pathway_id")],by="KO")
+table(duplicated(paste0(ko_phylum1$pathway_id,ko_phylum1$KO)))
+#ko_phylum1$id <- paste0(ko_phylum1$pathway_id,ko_phylum1$KO)
+
+#ko_phylum1 <- ko_phylum1[!duplicated(ko_phylum1$id),]
+
+#rownames(ko_phylum1) <- ko_phylum1$level2
+#ko_phylum2 <- aggregate(.~V5_2,ko_phylum1[, 2:34],FUN="sum")
+
+ko_phylum2 <- aggregate(.~pathway_id, ko_phylum1[,c(2:13)], FUN="sum")
+ko_phylum2 <- merge(ko_phylum2,kegg[,c("level2","pathway_id","level1")],by="pathway_id")
+ko_phylum2 <- ko_phylum2[!duplicated(ko_phylum2$pathway_id),]
+
+ko_phylum2 <- ko_phylum2 %>%
+  filter(level1 != "Human Diseases" & level1 != "Organismal Systems"& level2 != "Cellular community - eukaryotes") %>%
+  select(-level1)
+
+# calculate percentage of phylum in each function (level2)
+ko_phylum_up <- ko_phylum2[ko_phylum2$pathway_id %in% unique(diff_res[diff_res$log2FoldChange>0,]$pathway_id),]
+#ko_phylum_up <- as.data.frame(t(ko_phylum_up))
+ko_phylum_up <- aggregate(.~level2, ko_phylum_up[,c(2:13)], FUN="sum")
+ko_phylum_up[, 2:12] <- as.data.frame(t(apply(ko_phylum_up[, 2:12], 1, function(x) x / sum(x))))  
+rowSums(ko_phylum_up[,2:12])
+ko_phylum_up$type <- "Positive"
+
+
+ko_phylum_down <- ko_phylum2[ko_phylum2$pathway_id %in% unique(diff_res[diff_res$log2FoldChange<0,]$pathway_id),]
+#ko_phylum_down <- as.data.frame(t(ko_phylum_down))
+ko_phylum_down <- aggregate(.~level2, ko_phylum_down[,c(2:13)], FUN="sum")
+ko_phylum_down[, 2:12] <- as.data.frame(t(apply(ko_phylum_down[, 2:12], 1, function(x) x / sum(x))))  
+rowSums(ko_phylum_down[,2:12])
+ko_phylum_down$type <- "Negative"
+
+
+ko_phylum3 <- rbind(ko_phylum_up,ko_phylum_down)
+ko_phylum4 <- melt(ko_phylum3,c("level2","type"))
+
+
+#qual_col_pals = brewer.pal.info[brewer.pal.info$category == 'div',]
+#col_vector = unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals)))
+#set.seed(275)
+#col=sample(col_vector, 13,replace = F)
+
+
+ko_phylum4_1 <- data.frame(level2 = unique(data$level2)[!(unique(data$level2) %in% unique(ko_phylum4$level2))], 
+                           type=rep("Negative",4), 
+                           variable =rep("Others", 4),
+                           value=rep(0,4))  # 鐢变簬鏄捐憲宸紓鐨勯?氳矾灏戜簬鏈?鍒濈殑閫氳矾鏁扮洰锛屾墍浠ュ湪姝ゅ鍔犱笂娌℃湁鏄捐憲宸紓ko鐨勯?氳矾
+ko_phylum4 <- rbind(ko_phylum4, ko_phylum4_1)
+ko_phylum4$level2 <- factor(ko_phylum4$level2, levels = levels(data$level2))
+
+set.seed(23) 
+p3 <- ggplot(data = ko_phylum4, aes(x = factor(type), y = factor(level2,levels = order), color = variable, size=value)) +
+      scale_size(range = c(0, 3))+
+      scale_color_manual(values = c(as.vector(polychrome(12))[3:12],"grey")) +
+      geom_point(position = position_jitter(width = 0.4, height = 0.3)) +
+      guides(size = "none",
+             color = guide_legend(ncol = 1)) +
+      geom_hline(yintercept = midpoint, linetype = "dashed", color = "#FFA500") +
+      labs(x="",y="",title = "Taxa contribution",color="Phylum") +
+      #geom_text(p.data,mapping=aes(x=x+0.012,y=level2,label=as.character(asterisk)),col="#FFA500",vjust=0.7) +  # vjust涓烘鍚戜笅璋冩暣y杞?
+      #annotate(geom = "text",x=0.12,y=midpoint+1,label="Wildland > Farmland",size=2.5,color="#FFA500") +
+      #annotate(geom = "text",x=0.12,y=midpoint-1,label="Farmland < Wildland",size=2.5,color="#FFA500") +
+      theme_bw() +
+      theme(plot.margin = margin(0, 0, 0, 0, "pt"),
+            #axis.text.y = element_blank(),
+            plot.title = element_text(size=20,face = "bold", hjust = 0.5),
+            axis.text = element_text(color = "black",size = 12,face = "bold"),
+            axis.title.x = element_text(color="black",size = 15,face = "bold"),
+            axis.text.y = element_blank(),
+            axis.title.y = element_blank(), 
+            axis.ticks.y = element_blank(),
+            legend.title = element_text(size = 15,face = "bold"),
+            legend.text = element_text(size = 12,face = "bold"),
+            #legend.key.size = unit(0.3,"cm"),
+            #legend.position = c(0.8.15),  # c(x,y)
+            legend.background = element_rect(fill = "transparent", color = NA))
+
+print(p3)
+
+p3_1 <- ggplot(data = ko_phylum4, aes(x = factor(type), y = factor(level2,levels = order), color = variable, size=value)) +
+        scale_size(range = c(0, 3))+
+        scale_color_manual(values = c(as.vector(polychrome(12))[3:12],"grey")) +
+        geom_point(position = position_jitter(width = 0.4, height = 0.3)) +
+        guides(size = "none",
+               color = guide_legend(ncol = 1)) +
+        geom_hline(yintercept = midpoint, linetype = "dashed", color = "#FFA500") +
+        labs(x="",y="",title = "Taxa contribution",color="Phylum") +
+        #geom_text(p.data,mapping=aes(x=x+0.012,y=level2,label=as.character(asterisk)),col="#FFA500",vjust=0.7) +
+        #annotate(geom = "text",x=0.12,y=midpoint+1,label="Wildland > Farmland",size=2.5,color="#FFA500") +
+        #annotate(geom = "text",x=0.12,y=midpoint-1,label="Farmland < Wildland",size=2.5,color="#FFA500") +
+        theme_bw() +
+        theme(plot.margin = margin(0, 0, 0, 0, "pt"),
+              #axis.text.y = element_blank(),
+              plot.title = element_text(size=20,face = "bold", hjust = 0.5),
+              axis.text = element_text(color = "black",size = 12,face = "bold"),
+              axis.title.x = element_text(color="black",size = 15,face = "bold"),
+              axis.title.y = element_blank(),
+              axis.ticks.y = element_blank(),
+              legend.title = element_text(size = 15,face = "bold"),
+              legend.text = element_text(size = 12,face = "bold"),
+              #legend.key.size = unit(0.3,"cm"),
+              #legend.position = c(0.8,0.15),  # c(x,y)
+              legend.background = element_rect(fill = "transparent", color = NA))
+
+print(p3_1)
+
+
+# saveRDS(p1,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/picrust2/supplementary/picrust2_bar.rda")
+# saveRDS(p2,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/picrust2/supplementary/picrust2_deseq2_without_name.rda")
+# saveRDS(p2_1,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/picrust2/supplementary/picrust2_deseq2.rda")
+# saveRDS(p3,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/picrust2/supplementary/picrust2_contribution_without_name.rda")
+# saveRDS(p3_1,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/picrust2/supplementary/picrust2_contribution.rda")
+# 
+# save.image("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/picrust2/supplementary/all_picrust2_supplementary.rda")
+
+p_all <- p1+p2+p3
+
+print(p_all)
+
+# saveRDS(p_all,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/picrust2/supplementary/picrust2_all.rda")
+# 
+# 
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/picrust2/supplementary/picrust2.svg", p_all, height = 9, width = 18)
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/picrust2/supplementary/picrust2.pdf", p_all, height = 9, width = 18)
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/picrust2/supplementary/picrust2.png", p_all, height = 9, width = 18)
+
+#ggsave("result/picrust2.pdf",p,height = 6,width = 14)
+
+
+```
+

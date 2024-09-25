@@ -1,0 +1,380 @@
+---
+title: "Fig.S11_Network density"
+author: "Huanhuan Zhu"
+date: "2024-09-25"
+output: html_document
+---
+
+```{r,fig.align='center', fig.height=4, fig.width=6}
+
+#############################Fig.S11_Network density##########################
+
+library(vegan)
+library(psych)
+library(igraph)
+library(beepr)
+library(ggplot2)
+library(colorRamps)
+library(ape)
+library(devtools)
+library(stringr)
+library(reshape2)
+library(splitstackshape)
+library(emmeans)
+library(psych)
+library(graphics)
+library(phyloseq)
+library(dplyr)
+library(ggraph)
+library(pals)
+library(RColorBrewer)
+library(patchwork)
+
+### 1. AMF
+
+rm(list=ls())
+amf.network<-function(k, para){
+  
+  # Read OTU table and metadata
+  setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/AMF/otu/")
+  otu_all <-read.csv("otu_amfFlattening.csv", row.names = 1, check.names = F, header = T)
+  
+  group <- read.csv("sample_metadata.csv", header = T)
+  #group <- na.omit(group)
+  
+  group_MC <- group %>%
+    filter(country == "Uzbekistan",plants=="Maize"|plants=="Cotton")
+  group_MC$type <- rep("MC",nrow(group_MC))
+  
+  group_TS <- group %>%
+    filter(country == "Uzbekistan",plants=="Tamarix chinensis"|plants=="Suaeda")
+  group_TS$type <- rep("TS",nrow(group_TS))
+  
+  group2 <- rbind(group_MC,group_TS)
+  
+  env0 <- group2[order(group2$sample.id), ]
+  
+  test <- as.data.frame(rowSums(otu_all))
+  test$id <- rownames(test)
+  test2 <- test[order(test$`rowSums(otu_all)`,decreasing = T),]
+  otu_all <- otu_all[test2[test2$`rowSums(otu_all)`>= sum(test2$`rowSums(otu_all)`)*0.000,]$id,]
+  
+  # Subset data
+  env.tmp<-env0[env0$type==k,]
+  
+  otu_all2 <- otu_all[,colnames(otu_all) %in% env.tmp$sample.id]
+  
+  # Remove OTU with sequenc less than 5, and occur at least in 2samples 
+  otu <- t(otu_all2)[,specnumber(otu_all2) >= ncol(otu_all2)*para & colSums(t(otu_all2)) > 4]
+  
+  # Calculate correlation
+  spman.r0 = corr.test(otu, use="pairwise",method="spearman",adjust="fdr", alpha=.05, ci=FALSE)
+  
+  # Matrix transform to dataframe
+  Cor<-as.matrix(spman.r0$r)  
+  
+  Cor[lower.tri(Cor)] <- NA  # Keep upper y=triangle
+  diag(Cor) <- NA  # Remove diagonal
+  Cor.df <- reshape2::melt(Cor, na.rm = TRUE)  # long form
+  
+  P0<-as.matrix(spman.r0$p)
+  
+  P0[lower.tri(P0)] <- NA
+  diag(P0) <- NA
+  P.df <- reshape2::melt(P0, na.rm = TRUE)
+  
+  df <- merge(Cor.df, P.df, by=c("Var1","Var2"))
+  names(df) <- c("row","col","Cor","p")
+  df_new <<- data.frame("Cor" = df$Cor, "group" = rep(k,nrow(df)), "mean"=mean(df$Cor))
+}
+
+# Creat dataframe for r value
+df <- data.frame()
+amf.network("MC",0.2)
+df <- rbind(df,df_new)
+amf.network("TS",0.2)
+df <- rbind(df,df_new)
+
+#plot
+p_amf <- ggplot(df, aes(x=Cor,color=factor(group))) +
+         geom_density(size=1) +
+         geom_vline(aes(xintercept=mean,color=factor(group)), linetype= 5, size=1) +
+         scale_color_manual(name="Type",values = c("#008000","#FFA500"),
+                              labels = c(
+                                         "MC"="Farmland", 
+                                         "TS"="Wildland")) +
+         theme_bw() +
+         labs(x="Spearman's Rho", y="Density",title = "AMF") +
+         theme(
+            plot.title = element_text(size = 20,color = "black",face = "bold", hjust = 0.5), 
+            axis.title = element_text(size = 15, face = "bold"),
+            axis.text = element_text(colour = "black",size = 12,face = "bold"),
+            legend.title = element_text(colour = "black", size = 15, face = "bold"),
+            legend.text = element_text(colour = "black", size = 12, face = "bold"),
+            legend.spacing = unit(0.1, "cm"))
+
+p_amf
+
+
+### 2.Bacteria Phylum
+
+rm(list=setdiff(ls(), "p_amf"))
+bacteria.network<-function(k, para){
+  setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Bacteria/otu/")
+  otu_all <-read.csv("otu_bacteriaFlattening.csv", row.names = 1, check.names = F, header = T)
+  
+  group <- read.csv("sample_metadata.csv", header = T)
+  #group <- na.omit(group)
+  group_MC <- group %>%
+    filter(country == "Uzbekistan",plants=="Maize"|plants=="Cotton")
+  group_MC$type <- rep("MC",nrow(group_MC))
+  
+  group_TS <- group %>%
+    filter(country == "Uzbekistan",plants=="Tamarix chinensis"|plants=="Suaeda")
+  group_TS$type <- rep("TS",nrow(group_TS))
+  
+  group2 <- rbind(group_MC,group_TS)
+  
+  env0 <- group2[order(group2$sample.id), ]
+  
+  test <- as.data.frame(rowSums(otu_all))
+  test$id <- rownames(test)
+  test2 <- test[order(test$`rowSums(otu_all)`,decreasing = T),]
+  otu_all <- otu_all[test2[test2$`rowSums(otu_all)`>= sum(test2$`rowSums(otu_all)`)*0.000,]$id,]
+  
+  # Subset data
+  env.tmp<-env0[env0$type==k,]
+  
+  otu_all2 <- otu_all[,colnames(otu_all) %in% env.tmp$sample.id]
+  
+  otu <- t(otu_all2)[,specnumber(otu_all2) >= ncol(otu_all2)*para & colSums(t(otu_all2)) > 4]
+  
+  spman.r0 = corr.test(otu, use="pairwise",method="spearman",adjust="fdr", alpha=.05, ci=FALSE)
+  
+  Cor<-as.matrix(spman.r0$r)  
+  
+  Cor[lower.tri(Cor)] <- NA
+  diag(Cor) <- NA
+  Cor.df <- reshape2::melt(Cor, na.rm = TRUE)
+  
+  P0<-as.matrix(spman.r0$p)
+  
+  P0[lower.tri(P0)] <- NA
+  diag(P0) <- NA
+  P.df <- reshape2::melt(P0, na.rm = TRUE)
+  
+  df <- merge(Cor.df, P.df, by=c("Var1","Var2"))
+  names(df) <- c("row","col","Cor","p")
+  df_new <<- data.frame("Cor" = df$Cor, "group" = rep(k,nrow(df)), "mean"=mean(df$Cor))
+}
+
+df <- data.frame()
+bacteria.network("MC",0.2)
+df <- rbind(df,df_new)
+bacteria.network("TS",0.2)
+df <- rbind(df,df_new)
+
+p_bac <-  ggplot(df, aes(x=Cor,color=factor(group))) +
+          geom_density(size=1) +
+          geom_vline(aes(xintercept=mean,color=factor(group)), linetype= 5, size=1) +
+          scale_color_manual(name="Type",values = c("#008000","#FFA500"),
+                             labels = c(
+                               "MC"="Farmland", 
+                               "TS"="Wildland")) +
+          theme_bw() +
+          labs(x="Spearman's Rho", y="Density",title = "Bacteria") +
+          theme(
+            plot.title = element_text(size = 20,color = "black",face = "bold", hjust = 0.5), 
+            axis.title = element_text(size = 15, face = "bold"),
+            axis.text = element_text(colour = "black",size = 12,face = "bold"),
+            legend.title = element_text(colour = "black", size = 15, face = "bold"),
+            legend.text = element_text(colour = "black", size = 12, face = "bold"),
+            legend.spacing = unit(0.1, "cm"))
+
+p_bac
+
+### 3.Fungi
+
+rm(list=setdiff(ls(), c("p_amf","p_bac")))
+fungi.network<-function(k, para){
+  setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Fungi/otu/")
+  otu_all <-read.csv("otu_fungiFlattening.csv", row.names = 1, check.names = F, header = T)
+  
+  #percent transfer
+  data0<-data.frame(t((apply(otu_all,2,function(x){x / sum(x)}))),check.names = FALSE)#2 indicates cols; 鐢熸垚鐨勬槸OTU涓篶ol锛屾牱鍝佷负row
+  
+  group <- read.csv("sample_metadata.csv", header = T)
+  #group <- na.omit(group)
+  
+  group_MC <- group %>%
+    filter(country == "Uzbekistan",plants=="Maize"|plants=="Cotton")
+  group_MC$type <- rep("MC",nrow(group_MC))
+  
+  group_TS <- group %>%
+    filter(country == "Uzbekistan",plants=="Tamarix chinensis"|plants=="Suaeda")
+  group_TS$type <- rep("TS",nrow(group_TS))
+  
+  group2 <- rbind(group_MC,group_TS)
+  
+  env0 <- group2[order(group2$sample.id), ]
+  
+  test <- as.data.frame(rowSums(otu_all))
+  test$id <- rownames(test)
+  test2 <- test[order(test$`rowSums(otu_all)`,decreasing = T),]
+  otu_all <- otu_all[test2[test2$`rowSums(otu_all)`>= sum(test2$`rowSums(otu_all)`)*0.000,]$id,]
+  
+  # Subset data
+  env.tmp<-env0[env0$type==k,]
+  
+  otu_all2 <- otu_all[,colnames(otu_all) %in% env.tmp$sample.id]
+  
+  otu <- t(otu_all2)[,specnumber(otu_all2) >= ncol(otu_all2)*para & colSums(t(otu_all2)) > 4]
+  
+  spman.r0 = corr.test(otu, use="pairwise",method="spearman",adjust="fdr", alpha=.05, ci=FALSE)
+  
+  Cor<-as.matrix(spman.r0$r)  
+  
+  Cor[lower.tri(Cor)] <- NA
+  diag(Cor) <- NA
+  Cor.df <- reshape2::melt(Cor, na.rm = TRUE)
+  
+  P0<-as.matrix(spman.r0$p)
+  
+  P0[lower.tri(P0)] <- NA
+  diag(P0) <- NA
+  P.df <- reshape2::melt(P0, na.rm = TRUE)
+  
+  df <- merge(Cor.df, P.df, by=c("Var1","Var2"))
+  names(df) <- c("row","col","Cor","p")
+  df_new <<- data.frame("Cor" = df$Cor, "group" = rep(k,nrow(df)), "mean"=mean(df$Cor))
+}
+
+df <- data.frame()
+fungi.network("MC",0.2)
+df <- rbind(df,df_new)
+fungi.network("TS",0.2)
+df <- rbind(df,df_new)
+
+
+p_fung <- ggplot(df, aes(x=Cor,color=factor(group))) +
+          geom_density(size=1) +
+          geom_vline(aes(xintercept=mean,color=factor(group)), linetype= 5, size=1) +
+          scale_color_manual(name="Type",values = c("#008000","#FFA500"),
+                             labels = c(
+                               "MC"="Farmland", 
+                               "TS"="Wildland")) +
+          theme_bw() +
+          labs(x="Spearman's Rho", y="Density",title = "Fungi") +
+          theme(
+            plot.title = element_text(size = 20,color = "black",face = "bold", hjust = 0.5), 
+            axis.title = element_text(size = 15, face = "bold"),
+            axis.text = element_text(colour = "black",size = 12,face = "bold"),
+            legend.title = element_text(colour = "black", size = 15, face = "bold"),
+            legend.text = element_text(colour = "black", size = 12, face = "bold"),
+            legend.spacing = unit(0.1, "cm"))
+p_fung
+
+#########################Protist Phylum########################
+
+rm(list=setdiff(ls(), c("p_amf","p_bac","p_fung")))
+protist.network<-function(k, para){
+  setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Protist/otu/")
+  otu_all <-read.csv("otu_protistFlattening.csv", row.names = 1, check.names = F, header = T)
+  
+  #percent transfer
+  data0<-data.frame(t((apply(otu_all,2,function(x){x / sum(x)}))),check.names = FALSE)#2 indicates cols; 鐢熸垚鐨勬槸OTU涓篶ol锛屾牱鍝佷负row
+  
+  group <- read.csv("sample_metadata.csv", header = T)
+  #group <- na.omit(group)
+  
+  
+  group_MC <- group %>%
+    filter(country == "Uzbekistan",plants=="Maize"|plants=="Cotton")
+  group_MC$type <- rep("MC",nrow(group_MC))
+  
+  group_TS <- group %>%
+    filter(country == "Uzbekistan",plants=="Tamarix chinensis"|plants=="Suaeda")
+  group_TS$type <- rep("TS",nrow(group_TS))
+  
+  group2 <- rbind(group_MC,group_TS)
+  
+  env0 <- group2[order(group2$sample.id), ]
+  
+  test <- as.data.frame(rowSums(otu_all))
+  test$id <- rownames(test)
+  test2 <- test[order(test$`rowSums(otu_all)`,decreasing = T),]
+  otu_all <- otu_all[test2[test2$`rowSums(otu_all)`>= sum(test2$`rowSums(otu_all)`)*0.000,]$id,]
+  
+  # Subset data
+  env.tmp<-env0[env0$type==k,]
+  
+  otu_all2 <- otu_all[,colnames(otu_all) %in% env.tmp$sample.id]
+  
+  otu <- t(otu_all2)[,specnumber(otu_all2) >= ncol(otu_all2)*para & colSums(t(otu_all2)) > 4]
+  
+  spman.r0 = corr.test(otu, use="pairwise",method="spearman",adjust="fdr", alpha=.05, ci=FALSE)
+  
+  Cor<-as.matrix(spman.r0$r)  
+  
+  Cor[lower.tri(Cor)] <- NA
+  diag(Cor) <- NA
+  Cor.df <- reshape2::melt(Cor, na.rm = TRUE)
+  
+  P0<-as.matrix(spman.r0$p)
+  
+  P0[lower.tri(P0)] <- NA
+  diag(P0) <- NA
+  P.df <- reshape2::melt(P0, na.rm = TRUE)
+  
+  df <- merge(Cor.df, P.df, by=c("Var1","Var2"))
+  names(df) <- c("row","col","Cor","p")
+  df_new <<- data.frame("Cor" = df$Cor, "group" = rep(k,nrow(df)), "mean"=mean(df$Cor))
+}
+
+df <- data.frame()
+protist.network("MC",0.5)
+df <- rbind(df,df_new)
+protist.network("TS",0.5)
+df <- rbind(df,df_new)
+
+
+p_prot <- ggplot(df, aes(x = Cor,color = factor(group))) +
+          geom_density(size = 1) +
+          geom_vline(aes(xintercept = mean,color = factor(group)), linetype = 5, size = 1) +
+          scale_color_manual(name = "Type",values = c("#008000","#FFA500"),
+                             labels = c(
+                               "MC" = "Farmland", 
+                               "TS" = "Wildland")) +
+          theme_bw() +
+          labs(x="Spearman's Rho", y="Density",title = "Protists") +
+          theme(
+            plot.title = element_text(size = 20,color = "black",face = "bold", hjust = 0.5), 
+            axis.title = element_text(size = 15, face = "bold"),
+            axis.text = element_text(colour = "black",size = 12,face = "bold"),
+            legend.title = element_text(colour = "black", size = 15, face = "bold"),
+            legend.text = element_text(colour = "black", size = 12, face = "bold"),
+            legend.spacing = unit(0.1, "cm"))
+
+p_prot
+
+
+# saveRDS(p_amf,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/network_density/network_density_amf_mc.rda")
+# saveRDS(p_bac,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/network_density/network_density_bac_mc.rda")
+# saveRDS(p_fung,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/network_density/network_density_fung_mc.rda")
+# saveRDS(p_prot,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/network_density/network_density_prot_mc.rda")
+
+```{r,fig.align='center', fig.height=8, fig.width=12}
+
+p_all <- (p_amf + p_bac + p_fung + p_prot) #+
+  # plot_annotation(tag_levels = 'a') &
+  # theme(plot.tag = element_text(size = 15, face = "bold"))
+
+p_all
+
+
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/network_density/network_density.svg", p_all, height = 8, width = 12)
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/network_density/network_density.pdf", p_all, height = 8, width = 12)
+
+
+```
+

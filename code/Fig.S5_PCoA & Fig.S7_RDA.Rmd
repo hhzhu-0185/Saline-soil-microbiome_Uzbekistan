@@ -1,0 +1,817 @@
+---
+title: "Fig.S5_PCoA & Fig.S7_RDA"
+author: "Huanhuan Zhu"
+date: "2024-09-25"
+output: html_document
+---
+
+```{r,fig.align='center', fig.height=4, fig.width=6}
+#############################Fig.S5_PCoA & Fig.S7_RDA###########################
+
+library(vegan)
+library(colorRamps)
+library(patchwork)
+library(splitstackshape)
+library(ggplot2)
+library(ggrepel)
+
+### 1. AMF
+rm(list = ls())
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/AMF/otu")
+
+# Read OTU table
+otu_all0 <- read.csv("otu_amfFlattening.csv", check.names = F, row.names = 1, header = T)
+otu_all0 <- as.data.frame(t(otu_all0))
+otu_all0 <- otu_all0[order(rownames(otu_all0)),]
+otu_all0$sample_id <- row.names(otu_all0)  # 鏂板缓sample id鍒?
+
+# Read metadata file
+group0 <- read.csv("sample_metadata.csv", header = T)
+group0 <- na.omit(group0)
+group0$cnratio <- group0$tc/group0$tn
+group0$npration <- group0$tn/group0$tp
+group0$cpration <- group0$tc/group0$tp
+group0$napration <- group0$tn/group0$avail_p*1000
+group0$capration <- group0$tc/group0$avail_p*1000
+
+group <- group0[order(group0$sample.id), ]  #  Order by alphabetical order
+identical(otu_all0$sample_id,group$sample.id)  #  Check if sample.ids in two group are same
+
+# Combining OTU table and group information
+otu_all <- merge(otu_all0, group, by.x = "sample_id", by.y = "sample.id")
+identical(otu_all$sample_id, rownames(otu_all0))  #  Check if sample.ids in two group are same
+#rownames(otu_all) <- otu_all$sample_id 
+
+
+## 1.1 PCoA analysis
+pcoa <- cmdscale(vegdist(decostand(otu_all0[ ,1:670], "hellinger"), method = 'bray'), k = (nrow(otu_all0) - 1), eig = TRUE)
+pcoa_exp <- pcoa$eig/sum(pcoa$eig)  # Original OTU table for PCoA, for setting row names conveniently;  otu_all can not set row names for the duplicates
+pcoa1 <- paste0('PCo1 (', round(100*pcoa_exp[1], 2) ,'%', ')')
+pcoa2 <- paste0('PCo2 (', round(100*pcoa_exp[2], 2) ,'%', ')')
+
+# Permanova
+permanova <- adonis2(decostand(otu_all[ ,2:671], "hellinger") ~ factor(otu_all$plants), distance = 'bray', permutations = 999)
+print(permanova)
+
+# Creating dataframe for plot
+site2 <- data.frame(pcoa$point)[1:2]
+site2$sample <- rownames(site2)
+site2 <- merge(site2, group0, by.x = 'sample', by.y = "sample.id")
+names(site2)[2:3] <- c('pcoa1', 'pcoa2')
+
+# Creating R square value dataframe
+rletter.data <- data.frame(
+                            label = c(sprintf(" 'Habitat:' ~ italic(R)^2 ~ '=' ~ %.3g ~ '(Df = %.3g;' ~ 'F = %.3g)'", 
+                                      permanova["factor(otu_all$plants)", "R2"], 
+                                      permanova["factor(otu_all$plants)", "Df"], 
+                                      permanova["factor(otu_all$plants)", "F"])),
+                            y = c(range(site2[ ,"pcoa2"])[2] + 0.1 * diff(range(site2[ ,"pcoa1"]))),
+                            x = c(range(site2[ ,"pcoa1"])[1] + 0.8 * diff(range(site2[ ,"pcoa2"]))))
+
+# Creating P value dataframe
+df <- data.frame(
+                  p_value = c(permanova["factor(otu_all$plants)", "Pr(>F)"]),
+                  y = c(range(site2[ ,"pcoa2"])[2] + 0.1 * diff(range(site2[ ,"pcoa1"]))),
+                  x = c(range(site2[ ,"pcoa1"])[1] + 0.8 * diff(range(site2[ ,"pcoa2"]))))
+
+# Plot
+c("#ff00ff","#00ff00", "deepskyblue", "gold", "red", "navy", "darkgreen","maroon3", "black", "bisque", "grey")
+
+
+p1_amf <- ggplot(data = site2, aes(x = pcoa1, y = pcoa2)) +
+          geom_point(aes(color = factor(plants,levels = c("Bare land", "Suaeda", "Tamarix chinensis", "Cotton", "Maize"))), size = 7, alpha = 0.5) +
+          scale_colour_manual(
+                              name = "Habitat",
+                              label = c(
+                                        'Bare land' = 'Bareland',
+                                        'Cotton' = 'Cotton',
+                                        'Maize' = 'Maize',
+                                        'Suaeda' = 'Suaeda',
+                                        'Tamarix chinensis' = 'Tamarix'), 
+                              values = c("red","blue","purple","darkgreen","deepskyblue"),
+                              guide = guide_legend(override.aes = list(shape = 16), order = 3)) +
+          ggtitle("AMF") +
+          labs(x = pcoa1, y = pcoa2) +
+          #geom_text(aes(label=sample),size=2.5) +
+          geom_text(data = rletter.data,aes(x = x, y = y, label = label), 
+                    parse = T, color = 'red', size = 5, hjust = 1) +
+          geom_text(data = df[df$p_value <= 0.05 & df$p_value > 0.01,], aes(x = x + 0.03, y = y, label = "*"), 
+                    color = 'red', size = 5, hjust = 1) +
+          geom_text(data = df[df$p_value <= 0.01 & df$p_value > 0.001,], aes(x = x + 0.03, y = y, label = "**"), 
+                    color = 'red', size = 5, hjust = 1) +
+          geom_text(data = df[df$p_value <= 0.001,],aes(x = x + 0.03, y = y, label = "***"), 
+                    color = 'red', size = 5, hjust = 1) +
+          #geom_segment(aes(x = 0, y = 0, xend = Dim1*m1, yend = Dim2*m2),arrow = arrow(length = unit(0.02, "npc")),
+          #data = en_coord_cont.amp, size =0.6, colour = "grey")  +
+          #geom_text_repel(data = en_coord_cont.amp, aes(x=Dim1*m1,y=Dim2*m2,label = envfactor),
+          #colour="black",size = 5) +
+          theme_bw() +
+          theme(
+            plot.title = element_text(size = 20, face = "bold",hjust=0.5), 
+            legend.title = element_text(colour = "black",size = 15,face = "bold"),
+            legend.text = element_text(colour = "black",size = 12,face = "bold"),
+            axis.text = element_text(colour = "black",size = 12, face = "bold"),
+            axis.title = element_text(colour = "black",size = 15, face = "bold")) 
+
+p1_amf
+#ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/AMF/otu/pcoa/AMF-PCoA.svg",p1_amf,height = 4, width = 6)
+
+
+## 1.2 RDA
+env.sub <- otu_all[, 679:689]
+env.sub = log1p(env.sub)  # Transform environmental factor with log+1, make environmental factor uniform
+
+# All length of four axes are less than 3 for RDA, otherwise for CCA
+decorana(decostand(otu_all[ ,2:671],"hellinger"))  # rda/cca
+rda<- rda(decostand(otu_all[ ,2:671],"hellinger") ~ ., env.sub)
+
+# RDA calculation
+rda.sample = data.frame(rda$CCA$u[ ,1:2])  # Scores of each sample
+rda.sample$group = group$plants
+
+
+# Envfit with PCoA
+# Collinear analysis of environmental factors
+vif.cca(rda)
+
+# Envfit calculation
+ef<-envfit(pcoa,env.sub,permutations=999,na.rm=TRUE)
+r <- as.matrix(ef$vectors$r)
+p <- as.matrix(ef$vectors$pvals)
+env.p <- cbind(r,p)
+colnames(env.p) <- c("r2","p-value")
+
+ef2 <- as.data.frame(env.p)
+ef2$p.adj = p.adjust(ef2$`p-value`, method = 'BH')
+ef2
+amf_ef2 <- ef2
+
+# env filter
+rda.env = data.frame(rda$CCA$biplot[ ,1:2])  # Scores of environmental factors
+rda.env$type <- "no_sig"
+rda.env_filter <- rownames(ef2[ef2$p.adj <0.05,])
+rda.env[rda.env_filter,]$type <- "sig"
+rda.env$type <- factor(rda.env$type)
+
+rda1 = round(rda$CCA$eig[1] / sum(rda$CCA$eig)*100, 2)  # Explaination of axis 1
+rda2 = round(rda$CCA$eig[2] / sum(rda$CCA$eig)*100, 2)  # Explaination of axis 2
+
+# Plot
+p2_amf <- ggplot(rda.sample, aes(RDA1, RDA2)) +
+          geom_point(aes(color = factor(group,levels = c("Bare land", "Suaeda", "Tamarix chinensis", "Cotton", "Maize"))),size = 7,alpha = 0.5) + 
+          scale_colour_manual(
+                              name = "Habitat",
+                              label = c(
+                                        'Bare land' = 'Bareland',
+                                        'Cotton' = 'Cotton',
+                                        'Maize' = 'Maize',
+                                        'Suaeda' = 'Suaeda',
+                                        'Tamarix chinensis' = 'Tamarix'), 
+                              values = c("red","blue","purple","darkgreen","deepskyblue"),
+                              guide = guide_legend(override.aes = list(shape = 16), order = 3)) +
+          ggtitle("AMF") +
+          xlab(paste("RDA1 ( ",rda1,"%"," )", sep = "")) + 
+          ylab(paste("RDA2 ( ",rda2,"%"," )", sep = "")) +
+          geom_segment(data = rda.env, aes(x = 0, y = 0, xend = rda.env[ ,1], yend = rda.env[ ,2], linetype = factor(type)),
+                       arrow = arrow(length =unit(0.35,"cm"), type = "closed", angle = 22.5),
+                       colour = "darkgrey", size = 0.6) +  # add arrow
+          geom_text_repel(data = rda.env, segment.colour = "black",
+                          aes(x = rda.env[ ,1], 
+                              y = rda.env[ ,2], 
+                              label = c(
+                                        pH = "pH", 
+                                        salt_content = "Salt_content (鈥?)", 
+                                        tc = "TC (%)", 
+                                        tn = "TN (%)", 
+                                        tp = "TP (%)", 
+                                        avail_p = "Avail_P (mg/kg)",
+                                        cnratio = "TC:TN",
+                                        npration = "TN:TP",
+                                        cpration = "TC:TP",
+                                        napration = "TN:Avail_P",
+                                        capration = "TC:Avail_P")), 
+                          nudge_x = 0,
+                          nudge_y = 0, 
+                          size=4) +
+          scale_linetype_manual(name = "Significance", values = c(2, 1), labels = c("No significant", "Significant")) +
+          geom_vline(aes(xintercept = 0), linetype = "dotted") +
+          geom_hline(aes(yintercept = 0), linetype = "dotted") +
+          theme_bw() +
+          #theme(panel.grid=element_blank()) +
+          theme(
+            plot.title = element_text(size = 20, face = "bold",hjust=0.5), 
+            legend.title = element_text(colour = "black",size = 15,face = "bold"),
+            legend.text = element_text(colour = "black",size = 12,face = "bold"),
+            axis.text = element_text(colour = "black",size = 12, face = "bold"),
+            axis.title = element_text(colour = "black",size = 15, face = "bold")) 
+p2_amf
+#ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/AMF/otu/cca/AMF-CCA.svg",p2_amf,height = 4, width = 6)
+
+
+### 2. Bacteria
+rm(list = setdiff(ls(), c("p1_amf","p2_amf","amf_ef2")))
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Bacteria/otu")
+
+# Read OTU table
+otu_all0 <- read.csv("otu_bacteriaFlattening.csv", check.names = F, row.names = 1, header = T)
+otu_all0 <- as.data.frame(t(otu_all0))
+otu_all0 <- otu_all0[order(rownames(otu_all0)),]
+otu_all0 <- as.data.frame(otu_all0)
+otu_all0$sample_id <- row.names(otu_all0)
+
+# Read metadata file
+group0 <- read.csv("sample_metadata.csv", header = T)
+group0 <- na.omit(group0)
+group0$cnratio <- group0$tc/group0$tn
+group0$npration <- group0$tn/group0$tp
+group0$cpration <- group0$tc/group0$tp
+group0$napration <- group0$tn/group0$avail_p*1000
+group0$capration <- group0$tc/group0$avail_p*1000
+
+group <- group0[order(group0$sample.id), ]
+identical(otu_all0$sample_id,group$sample.id)
+
+otu_all <- merge(otu_all0, group, by.x = "sample_id", by.y = "sample.id")
+identical(otu_all$sample_id, rownames(otu_all0))
+#rownames(otu_all) <- otu_all$sample_id 
+
+
+## 2.1 PCoA analysis
+pcoa <- cmdscale(vegdist(decostand(otu_all0[ ,1:1923], "hellinger"), method = 'bray'), k = (nrow(otu_all0) - 1), eig = TRUE)
+pcoa_exp <- pcoa$eig/sum(pcoa$eig)
+pcoa1 <- paste0('PCo1 (', round(100*pcoa_exp[1], 2) ,'%', ')')
+pcoa2 <- paste0('PCo2 (', round(100*pcoa_exp[2], 2) ,'%', ')')
+
+# Permanova
+permanova<-adonis2(decostand(otu_all[ ,2:1924], "hellinger") ~ factor(otu_all$plants), distance = 'bray', permutations = 999)
+print(permanova)
+
+# Creating dataframe for plot
+site2 <- data.frame(pcoa$point)[1:2]
+site2$sample <- rownames(site2)
+site2 <- merge(site2, group0, by.x = 'sample', by.y = "sample.id")
+names(site2)[2:3] <- c('pcoa1', 'pcoa2')
+
+# Creating R square value dataframe
+rletter.data <- data.frame(
+                            label = c(
+                                      sprintf(" 'Habitat:' ~ italic(R)^2 ~ '=' ~ %.3g ~ '(Df = %.3g;' ~ 'F = %.3g)'", 
+                                              permanova["factor(otu_all$plants)", "R2"], 
+                                              permanova["factor(otu_all$plants)", "Df"], 
+                                              permanova["factor(otu_all$plants)", "F"])),
+                            y = c(range(site2[ ,"pcoa2"])[2] + 0.1 * diff(range(site2[ ,"pcoa1"]))),
+                            x = c(range(site2[ ,"pcoa1"])[1] + 1.1 * diff(range(site2[ ,"pcoa2"]))))
+
+# Creating P value dataframe
+df <- data.frame(
+                  p_value = c(permanova["factor(otu_all$plants)", "Pr(>F)"]),
+                  y = c(range(site2[ ,"pcoa2"])[2] + 0.1 * diff(range(site2[ ,"pcoa1"]))),
+                  x = c(range(site2[ ,"pcoa1"])[1] + 1.1 * diff(range(site2[ ,"pcoa2"]))))
+
+# Plot
+p1_bac <- ggplot(data = site2, aes(x = pcoa1, y = pcoa2)) +
+          geom_point(aes(color = factor(plants,levels = c("Bare land", "Suaeda", "Tamarix chinensis", "Cotton", "Maize"))), size = 7, alpha = 0.6) +
+          scale_colour_manual(
+                              name = "Habitat",
+                              label = c(
+                                        'Bare land' = 'Bareland',
+                                        'Cotton' = 'Cotton',
+                                        'Maize' = 'Maize',
+                                        'Suaeda' = 'Suaeda',
+                                        'Tamarix chinensis' = 'Tamarix'), 
+                              values = c("red","blue","purple","darkgreen","deepskyblue"),
+                              guide = guide_legend(override.aes = list(shape = 16), order = 3)) +
+          ggtitle("Bacteria") +
+          labs(x = pcoa1, y = pcoa2) +
+          #geom_text(aes(label=sample),size=2.5) +
+          geom_text(data = rletter.data,aes(x = x, y = y, label = label), 
+                    parse = T, color = 'red', size = 5, hjust = 1) +
+          geom_text(data = df[df$p_value <= 0.05 & df$p_value > 0.01,], aes(x = x + 0.035, y = y, label = "*"), 
+                    color = 'red', size = 5, hjust = 1) +
+          geom_text(data = df[df$p_value <= 0.01 & df$p_value > 0.001,], aes(x = x + 0.035, y = y, label = "**"), 
+                    color = 'red', size = 5, hjust = 1) +
+          geom_text(data = df[df$p_value <= 0.001,],aes(x = x + 0.035, y = y, label = "***"), 
+                    color = 'red', size = 5, hjust = 1) +
+          #geom_segment(aes(x = 0, y = 0, xend = Dim1*m1, yend = Dim2*m2),arrow = arrow(length = unit(0.02, "npc")),
+          #data = en_coord_cont.amp, size =0.6, colour = "grey")  +
+          #geom_text_repel(data = en_coord_cont.amp, aes(x=Dim1*m1,y=Dim2*m2,label = envfactor),
+          #colour="black",size = 5) +
+          theme_bw() +
+          theme(
+            plot.title = element_text(size = 20, face = "bold",hjust=0.5), 
+            legend.title = element_text(colour = "black",size = 12,face = "bold"),
+            legend.text = element_text(colour = "black",size = 12,face = "bold"),
+            axis.text = element_text(size = 12, face = "bold"),
+            axis.title = element_text(size = 15, face = "bold")) 
+        
+        p1_bac
+#ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Bacteria/otu/pcoa/Bacteria-PCoA.svg",p1_bac,height = 4, width = 6)
+
+   
+## 2.2 RDA
+env.sub <- otu_all[, 1932:1942]
+env.sub = log1p(env.sub)
+
+# All length of four axes are less than 3 for RDA, otherwise for CCA
+decorana(decostand(otu_all[ ,2:1294],"hellinger"))  # rda/cca
+
+# RDA and RDA scores
+rda<- rda(decostand(otu_all[ ,2:1294],"hellinger") ~ ., env.sub)
+rda.sample=data.frame(rda$CCA$u[,1:2])  # Scores of each sample
+rda.sample$group = otu_all$plant  # Add group
+
+## 2.2 Envfit with PCoA
+# Collinear analysis of environmental factors
+vif.cca(rda)
+
+# Envfit calculation
+ef<-envfit(pcoa,env.sub,permutations=999,na.rm=TRUE)
+r <- as.matrix(ef$vectors$r)
+p <- as.matrix(ef$vectors$pvals)
+env.p <- cbind(r,p)
+colnames(env.p) <- c("r2","p-value")
+ef2 <- as.data.frame(env.p)
+ef2$p.adj = p.adjust(ef2$`p-value`, method = 'BH')
+ef2
+bac_ef2 <- ef2
+
+# env filter
+rda.env = data.frame(rda$CCA$biplot[ ,1:2])  # Scores of environmental factors
+rda.env$type <- "no_sig"
+rda.env_filter <- rownames(ef2[ef2$p.adj <0.05,])
+rda.env[rda.env_filter,]$type <- "sig"
+rda.env$type <- factor(rda.env$type)
+
+rda1 =round(rda$CCA$eig[1]/sum(rda$CCA$eig)*100,2)  # Explaination of axis 1
+rda2 =round(rda$CCA$eig[2]/sum(rda$CCA$eig)*100,2)  # Explaination of axis 2
+
+
+# Plot
+p2_bac <- ggplot(rda.sample, aes(RDA1, RDA2)) +
+          geom_point(aes(color = factor(group,levels = c("Bare land", "Suaeda", "Tamarix chinensis", "Cotton", "Maize"))),size = 7,alpha = 0.5) + 
+          scale_colour_manual(
+                              name = "Habitat",
+                              label = c(
+                                        'Bare land' = 'Bareland',
+                                        'Cotton' = 'Cotton',
+                                        'Maize' = 'Maize',
+                                        'Suaeda' = 'Suaeda',
+                                        'Tamarix chinensis' = 'Tamarix'), 
+                              values = c("red","blue","purple","darkgreen","deepskyblue"),
+                              guide = guide_legend(override.aes = list(shape = 16), order = 3)) +
+          ggtitle("Bacteria") +
+          xlab(paste("RDA1 ( ",rda1,"%"," )", sep = "")) + 
+          ylab(paste("RDA2 ( ",rda2,"%"," )", sep = "")) +
+          geom_segment(data = rda.env, aes(x = 0, y = 0, xend = rda.env[ ,1], yend = rda.env[ ,2], linetype = factor(type)),
+                       arrow = arrow(length =unit(0.35,"cm"), type = "closed", angle = 22.5),
+                       colour = "darkgrey", size = 0.6) +  # add arrow
+          geom_text_repel(data = rda.env, segment.colour = "black",
+                          aes(x = rda.env[ ,1], 
+                              y = rda.env[ ,2], 
+                              label = c(
+                                pH = "pH", 
+                                salt_content = "Salt_content (鈥?)", 
+                                tc = "TC (%)", 
+                                tn = "TN (%)", 
+                                tp = "TP (%)", 
+                                avail_p = "Avail_P (mg/kg)",
+                                cnratio = "TC:TN",
+                                npration = "TN:TP",
+                                cpration = "TC:TP",
+                                napration = "TN:Avail_P",
+                                capration = "TC:Avail_P")), 
+                          nudge_x = 0,
+                          nudge_y = 0, 
+                          size=4) +
+          scale_linetype_manual(name = "Significance", values = c(2, 1), labels = c("No significant", "Significant")) +
+          geom_vline(aes(xintercept = 0), linetype = "dotted") +
+          geom_hline(aes(yintercept = 0), linetype = "dotted") +
+          theme_bw() +
+          #theme(panel.grid=element_blank()) +
+          theme(
+            plot.title = element_text(size = 20, face = "bold",hjust=0.5), 
+            legend.title = element_text(colour = "black",size = 15,face = "bold"),
+            legend.text = element_text(colour = "black",size = 12,face = "bold"),
+            axis.text = element_text(colour = "black",size = 12, face = "bold"),
+            axis.title = element_text(colour = "black",size = 15, face = "bold")) 
+p2_bac
+#ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Bacteria/otu/cca/Bacteria-CCA.svg",p2_bac,height = 4, width = 6)
+
+
+### 3. Fungi
+rm(list = setdiff(ls(), c("p1_amf","p2_amf","p1_bac","p2_bac","amf_ef2","bac_ef2")))
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Fungi/otu")
+
+# Read OTU table
+otu_all0 <- read.csv("otu_fungiFlattening.csv", check.names = F, row.names = 1, header = T)
+otu_all0 <- as.data.frame(t(otu_all0))
+otu_all0 <- otu_all0[order(rownames(otu_all0)),]
+otu_all0 <- as.data.frame(otu_all0)
+otu_all0$sample_id <- row.names(otu_all0)
+
+# Read metadata file
+group0 <- read.csv("sample_metadata.csv", header = T)
+group0 <- na.omit(group0)
+group0$cnratio <- group0$tc/group0$tn
+group0$npration <- group0$tn/group0$tp
+group0$cpration <- group0$tc/group0$tp
+group0$napration <- group0$tn/group0$avail_p*1000
+group0$capration <- group0$tc/group0$avail_p*1000
+
+group <- group0[order(group0$sample.id), ]
+identical(otu_all0$sample_id,group$sample.id)  # 妫?鏌ヤ袱鍒楀悜閲忔槸鍚︾浉绛?
+
+# Combining OTU table and group information
+otu_all <- merge(otu_all0, group, by.x = "sample_id", by.y = "sample.id")
+identical(otu_all$sample_id, rownames(otu_all0))  # 妫?鏌ユ槸鍚﹀悎骞舵纭?
+#rownames(otu_all) <- otu_all$sample_id 
+
+## 3.1 PCoA analysis
+pcoa <- cmdscale(vegdist(decostand(otu_all0[ ,1:2511], "hellinger"), method = 'bray'), k = (nrow(otu_all0) - 1), eig = TRUE)
+pcoa_exp <- pcoa$eig/sum(pcoa$eig)  # PCoA鐨勫浘鐢ㄥ師濮嬬殑otu table锛屼究浜庤缃鍚嶏紝鐢╫tu_all鏃犳硶淇濆瓨琛屽悕锛屽洜涓烘湁閲嶅鍊?
+pcoa1 <- paste0('PCo1 (', round(100*pcoa_exp[1], 2) ,'%', ')')
+pcoa2 <- paste0('PCo2 (', round(100*pcoa_exp[2], 2) ,'%', ')')
+
+# Permanova
+permanova<-adonis2(decostand(otu_all[ ,2:2512], "hellinger") ~ factor(otu_all$plants), distance = 'bray', permutations = 999)
+print(permanova)
+
+# Creating dataframe for plot
+site2 <- data.frame(pcoa$point)[1:2]
+site2$sample <- rownames(site2)
+site2 <- merge(site2, group0, by.x = 'sample', by.y = "sample.id")
+names(site2)[2:3] <- c('pcoa1', 'pcoa2')
+
+# Creating R square value dataframe
+rletter.data <- data.frame(
+                            label = c(
+                                      sprintf(" 'Habitat:' ~ italic(R)^2 ~ '=' ~ %.3g ~ '(Df = %.3g;' ~ 'F = %.3g)'", 
+                                              permanova["factor(otu_all$plants)", "R2"], 
+                                              permanova["factor(otu_all$plants)", "Df"], 
+                                              permanova["factor(otu_all$plants)", "F"])),
+                             y = c(range(site2[ ,"pcoa2"])[2] + 0.1 * diff(range(site2[ ,"pcoa1"]))),
+                             x = c(range(site2[ ,"pcoa1"])[1] + 1.4 * diff(range(site2[ ,"pcoa2"]))))
+
+# Creating P value dataframe
+df <- data.frame(
+                  p_value = c(permanova["factor(otu_all$plants)", "Pr(>F)"]),
+                  y = c(range(site2[ ,"pcoa2"])[2] + 0.1 * diff(range(site2[ ,"pcoa1"]))),
+                  x = c(range(site2[ ,"pcoa1"])[1] + 1.4 * diff(range(site2[ ,"pcoa2"]))))
+
+# Plot
+p1_fung <-ggplot(data = site2, aes(x = pcoa1, y = pcoa2)) +
+          geom_point(aes(color = factor(plants,levels = c("Bare land", "Suaeda", "Tamarix chinensis", "Cotton", "Maize"))), size = 7, alpha = 0.6) +
+          scale_shape_manual(values = 16) +
+          scale_colour_manual(
+                              name = "Habitat",
+                              label = c(
+                                        'Bare land' = 'Bareland',
+                                        'Cotton' = 'Cotton',
+                                        'Maize' = 'Maize',
+                                        'Suaeda' = 'Suaeda',
+                                        'Tamarix chinensis' = 'Tamarix'), 
+                              values = c("red","blue","purple","darkgreen","deepskyblue"),
+                              guide = guide_legend(override.aes = list(shape = 16), order = 3)) +
+          ggtitle("Fungi") +
+          labs(x = pcoa1, y = pcoa2) +
+          #geom_text(aes(label=sample),size=2.5) +
+          geom_text(data = rletter.data,aes(x = x, y = y, label = label), 
+                    parse = T, color = 'red', size = 5, hjust = 1) +
+          geom_text(data = df[df$p_value <= 0.05 & df$p_value > 0.01,], aes(x = x + 0.03, y = y, label = "*"), 
+                    color = 'red', size = 5, hjust = 1) +
+          geom_text(data = df[df$p_value <= 0.01 & df$p_value > 0.001,], aes(x = x + 0.03, y = y, label = "**"), 
+                    color = 'red', size = 5, hjust = 1) +
+          geom_text(data = df[df$p_value <= 0.001,],aes(x = x + 0.03, y = y, label = "***"), 
+                    color = 'red', size = 5, hjust = 1) +
+          #geom_segment(aes(x = 0, y = 0, xend = Dim1*m1, yend = Dim2*m2),arrow = arrow(length = unit(0.02, "npc")),
+          #data = en_coord_cont.amp, size =0.6, colour = "grey")  +
+          #geom_text_repel(data = en_coord_cont.amp, aes(x=Dim1*m1,y=Dim2*m2,label = envfactor),
+          #colour="black",size = 5) +
+          theme_bw() +
+          theme(
+            plot.title = element_text(size = 20, face = "bold",hjust=0.5), 
+            legend.title = element_text(colour = "black",size = 12,face = "bold"),
+            legend.text = element_text(colour = "black",size = 12,face = "bold"),
+            axis.text = element_text(size = 12, face = "bold"),
+            axis.title = element_text(size = 15, face = "bold")) 
+
+p1_fung
+#ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Fungi/otu/pcoa/Fungi-PCoA.svg",p1_fung,height = 4, width = 6)
+
+
+## 3.2 RDA
+env.sub <- otu_all[, 2520:2530]
+env.sub = log1p(env.sub)
+
+# All length of four axes are less than 3 for RDA, otherwise for CCA
+decorana(decostand(otu_all[ ,2:2512],"hellinger"))  # rda/cca
+rda<- rda(decostand(otu_all[ ,2:2512],"hellinger") ~ ., env.sub)
+
+rda.sample=data.frame(rda$CCA$u[,1:2])
+rda.sample$group = otu_all$plant
+
+# Envfit with PCoA
+# Collinear analysis of environmental factors
+vif.cca(rda)
+
+# Envfit calculation
+ef<-envfit(pcoa,env.sub,permutations=999,na.rm=TRUE)
+r <- as.matrix(ef$vectors$r)
+p <- as.matrix(ef$vectors$pvals)
+env.p <- cbind(r,p)
+colnames(env.p) <- c("r2","p-value")
+ef2 <- as.data.frame(env.p)
+ef2$p.adj = p.adjust(ef2$`p-value`, method = 'BH')
+ef2
+fung_ef2 <- ef2
+
+# env filter
+rda.env = data.frame(rda$CCA$biplot[ ,1:2])  # Scores of environmental factors
+rda.env$type <- "no_sig"
+rda.env_filter <- rownames(ef2[ef2$p.adj <0.05,])
+rda.env[rda.env_filter,]$type <- "sig"
+rda.env$type <- factor(rda.env$type)
+
+rda1 =round(rda$CCA$eig[1]/sum(rda$CCA$eig)*100,2)
+rda2 =round(rda$CCA$eig[2]/sum(rda$CCA$eig)*100,2)
+
+# Plot
+p2_fung <-  ggplot(rda.sample, aes(RDA1, RDA2)) +
+            geom_point(aes(color = factor(group,levels = c("Bare land", "Suaeda", "Tamarix chinensis", "Cotton", "Maize"))),size = 7,alpha = 0.5) + 
+            scale_colour_manual(
+              name = "Habitat",
+              label = c(
+                        'Bare land' = 'Bareland',
+                        'Cotton' = 'Cotton',
+                        'Maize' = 'Maize',
+                        'Suaeda' = 'Suaeda',
+                        'Tamarix chinensis' = 'Tamarix'), 
+              values = c("red","blue","purple","darkgreen","deepskyblue"),
+              guide = guide_legend(override.aes = list(shape = 16), order = 3)) +
+            ggtitle("Fungi") +
+            xlab(paste("RDA1 ( ",rda1,"%"," )", sep = "")) + 
+            ylab(paste("RDA2 ( ",rda2,"%"," )", sep = "")) +
+            geom_segment(data = rda.env, aes(x = 0, y = 0, xend = rda.env[ ,1], yend = rda.env[ ,2], linetype = factor(type)),
+                         arrow = arrow(length =unit(0.35,"cm"), type = "closed", angle = 22.5),
+                         colour = "darkgrey", size = 0.6) +  # add arrow
+            geom_text_repel(data = rda.env, segment.colour = "black",
+                            aes(x = rda.env[ ,1], 
+                                y = rda.env[ ,2], 
+                                label = c(
+                                  pH = "pH", 
+                                  salt_content = "Salt_content (鈥?)", 
+                                  tc = "TC (%)", 
+                                  tn = "TN (%)", 
+                                  tp = "TP (%)", 
+                                  avail_p = "Avail_P (mg/kg)",
+                                  cnratio = "TC:TN",
+                                  npration = "TN:TP",
+                                  cpration = "TC:TP",
+                                  napration = "TN:Avail_P",
+                                  capration = "TC:Avail_P")), 
+                            nudge_x = 0,
+                            nudge_y = 0, 
+                            size=4) +
+            scale_linetype_manual(name = "Significance", values = c(2, 1), labels = c("No significant", "Significant")) +
+            geom_vline(aes(xintercept = 0), linetype = "dotted") +
+            geom_hline(aes(yintercept = 0), linetype = "dotted") +
+            theme_bw() +
+            #theme(panel.grid=element_blank()) +
+            theme(
+              plot.title = element_text(size = 20, face = "bold",hjust=0.5), 
+              legend.title = element_text(colour = "black",size = 15,face = "bold"),
+              legend.text = element_text(colour = "black",size = 12,face = "bold"),
+              axis.text = element_text(colour = "black",size = 12, face = "bold"),
+              axis.title = element_text(colour = "black",size = 15, face = "bold")) 
+p2_fung
+#ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Fungi/otu/cca/Fungi-CCA.svg",p2_fung,height = 4, width = 6)
+
+
+### 4. Protist
+rm(list = setdiff(ls(), c("p1_amf","p2_amf","p1_bac","p2_bac","p1_fung","p2_fung","amf_ef2","bac_ef2", "fung_ef2")))
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Protist/otu")
+
+# Read OTU table
+otu_all0 <- read.csv("otu_protistFlattening.csv", check.names = F, row.names = 1, header = T)
+otu_all0 <- as.data.frame(t(otu_all0))
+otu_all0 <- otu_all0[order(rownames(otu_all0)),]
+otu_all0 <- as.data.frame(otu_all0)
+otu_all0$sample_id <- row.names(otu_all0)
+
+# Read metadata file
+group0 <- read.csv("sample_metadata.csv", header = T)
+group0 <- na.omit(group0)
+group0$cnratio <- group0$tc/group0$tn
+group0$npration <- group0$tn/group0$tp
+group0$cpration <- group0$tc/group0$tp
+group0$napration <- group0$tn/group0$avail_p*1000
+group0$capration <- group0$tc/group0$avail_p*1000
+
+group <- group0[order(group0$sample.id), ]
+identical(otu_all0$sample_id,group$sample.id)
+
+# Combining OTU table and group information
+otu_all <- merge(otu_all0, group, by.x = "sample_id", by.y = "sample.id")
+identical(otu_all$sample_id, rownames(otu_all0))  #妫?鏌ユ槸鍚﹀悎骞舵纭?
+#rownames(otu_all) <- otu_all$sample_id 
+
+
+## 4.1 PCoA analysis
+pcoa <- cmdscale(vegdist(decostand(otu_all0[ ,1:2282], "hellinger"), method = 'bray'), k = (nrow(otu_all0) - 1), eig = TRUE)
+pcoa_exp <- pcoa$eig/sum(pcoa$eig)  # PCoA鐨勫浘鐢ㄥ師濮嬬殑otu table锛屼究浜庤缃鍚嶏紝鐢╫tu_all鏃犳硶淇濆瓨琛屽悕锛屽洜涓烘湁閲嶅鍊?
+pcoa1 <- paste0('PCo1 (', round(100*pcoa_exp[1], 2) ,'%', ')')
+pcoa2 <- paste0('PCo2 (', round(100*pcoa_exp[2], 2) ,'%', ')')
+
+# Permanova
+permanova<-adonis2(decostand(otu_all[ ,2:2283], "hellinger") ~ factor(otu_all$plants), distance = 'bray', permutations = 999)
+print(permanova)
+
+# Creating dataframe for plot
+site2 <- data.frame(pcoa$point)[1:2]
+site2$sample <- rownames(site2)
+site2 <- merge(site2, group0, by.x = 'sample', by.y = "sample.id")
+names(site2)[2:3] <- c('pcoa1', 'pcoa2')
+
+# Creating R square value dataframe
+rletter.data <- data.frame(
+                            label = c(
+                                      sprintf(" 'Habitat:' ~ italic(R)^2 ~ '=' ~ %.3g ~ '(Df = %.3g;' ~ 'F = %.3g)'", 
+                                              permanova["factor(otu_all$plants)", "R2"], 
+                                              permanova["factor(otu_all$plants)", "Df"], 
+                                              permanova["factor(otu_all$plants)", "F"])),
+                            y = c(range(site2[ ,"pcoa2"])[2] + 0.1 * diff(range(site2[ ,"pcoa1"]))),
+                            x = c(range(site2[ ,"pcoa1"])[1] + 1.1 * diff(range(site2[ ,"pcoa2"]))))
+
+# Creating P value dataframe
+df <- data.frame(
+                  p_value = c(permanova["factor(otu_all$plants)", "Pr(>F)"]),
+                  y = c( range(site2[ ,"pcoa2"])[2] + 0.1 * diff(range(site2[ ,"pcoa1"]))),
+                  x = c(range(site2[ ,"pcoa1"])[1] + 1.1 * diff(range(site2[ ,"pcoa2"]))))
+
+# Plot
+p1_prot <-ggplot(data = site2, aes(x = pcoa1, y = pcoa2)) +
+          geom_point(aes(color = factor(plants,levels = c("Bare land", "Suaeda", "Tamarix chinensis", "Cotton", "Maize"))), size = 7, alpha = 0.6) +
+          scale_colour_manual(
+                              name = "Habitat",
+                              label = c(
+                                        'Bare land' = 'Bareland',
+                                        'Cotton' = 'Cotton',
+                                        'Maize' = 'Maize',
+                                        'Suaeda' = 'Suaeda',
+                                        'Tamarix chinensis' = 'Tamarix'), 
+                              values = c("red","blue","purple","darkgreen","deepskyblue"),
+                              guide = guide_legend(override.aes = list(shape = 16), order = 3)) +
+          ggtitle("Protists") +
+          labs(x = pcoa1, y = pcoa2) +
+          #geom_text(aes(label=sample),size=2.5) +
+          geom_text(data = rletter.data,aes(x = x, y = y, label = label), 
+                    parse = T, color = 'red', size = 5, hjust = 1) +
+          geom_text(data = df[df$p_value <= 0.05 & df$p_value > 0.01,], aes(x = x + 0.03, y = y, label = "*"), 
+                    color = 'red', size = 5, hjust = 1) +
+          geom_text(data = df[df$p_value <= 0.01 & df$p_value > 0.001,], aes(x = x + 0.03, y = y, label = "**"), 
+                    color = 'red', size = 5, hjust = 1) +
+          geom_text(data = df[df$p_value <= 0.001,],aes(x = x + 0.03, y = y, label = "***"), 
+                    color = 'red', size = 5, hjust = 1) +
+          #geom_segment(aes(x = 0, y = 0, xend = Dim1*m1, yend = Dim2*m2),arrow = arrow(length = unit(0.02, "npc")),
+          #data = en_coord_cont.amp, size =0.6, colour = "grey")  +
+          #geom_text_repel(data = en_coord_cont.amp, aes(x=Dim1*m1,y=Dim2*m2,label = envfactor),
+          #colour="black",size = 5) +
+          theme_bw() +
+          theme(
+            plot.title = element_text(size = 20, face = "bold",hjust=0.5), 
+            legend.title = element_text(colour = "black",size = 12,face = "bold"),
+            legend.text = element_text(colour = "black",size = 12,face = "bold"),
+            axis.text = element_text(size = 12, face = "bold"),
+            axis.title = element_text(size = 15, face = "bold")) 
+
+p1_prot
+#ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Protist/otu/pcoa/Protist-PCoA.svg",p1_prot,height = 4, width = 6)
+
+
+## 4.2 RDA
+env.sub <- otu_all[, 2291:2301]
+env.sub = log1p(env.sub)
+
+# All length of four axes are less than 3 for RDA, otherwise for CCA
+decorana(decostand(otu_all[ ,2:2283],"hellinger"))  # rda/cca
+rda<- rda(decostand(otu_all[ ,2:2283],"hellinger") ~ ., env.sub)
+
+rda.sample=data.frame(rda$CCA$u[,1:2])
+rda.sample$group = otu_all$plant
+
+# Envfit with PCoA
+# Collinear analysis of environmental factors
+vif.cca(rda)
+
+# envfit璁＄畻
+ef<-envfit(pcoa,env.sub,permutations=999,na.rm=TRUE)
+r <- as.matrix(ef$vectors$r)
+p <- as.matrix(ef$vectors$pvals)
+env.p <- cbind(r,p)
+colnames(env.p) <- c("r2","p-value")
+ef2 <- as.data.frame(env.p)
+ef2$p.adj = p.adjust(ef2$`p-value`, method = 'BH')
+ef2
+prot_ef2 <- ef2
+
+# env filter
+rda.env = data.frame(rda$CCA$biplot[ ,1:2])  # Scores of environmental factors
+rda.env$type <- "no_sig"
+rda.env_filter <- rownames(ef2[ef2$p.adj <0.05,])
+rda.env[rda.env_filter,]$type <- "sig"
+rda.env$type <- factor(rda.env$type)
+
+rda1 =round(rda$CCA$eig[1]/sum(rda$CCA$eig)*100,2)
+rda2 =round(rda$CCA$eig[2]/sum(rda$CCA$eig)*100,2)
+
+# Plot
+p2_prot <-  ggplot(rda.sample, aes(RDA1, RDA2)) +
+            geom_point(aes(color = factor(group,levels = c("Bare land", "Suaeda", "Tamarix chinensis", "Cotton", "Maize"))),size = 7,alpha = 0.5) + 
+            scale_colour_manual(
+                                name = "Protists",
+                                label = c(
+                                          'Bare land' = 'Bareland',
+                                          'Cotton' = 'Cotton',
+                                          'Maize' = 'Maize',
+                                          'Suaeda' = 'Suaeda',
+                                          'Tamarix chinensis' = 'Tamarix'), 
+                                values = c("red","blue","purple","darkgreen","deepskyblue"),
+                                guide = guide_legend(override.aes = list(shape = 16), order = 3)) +
+            ggtitle("Protist") +
+            xlab(paste("RDA1 ( ",rda1,"%"," )", sep = "")) + 
+            ylab(paste("RDA2 ( ",rda2,"%"," )", sep = "")) +
+            geom_segment(data = rda.env, aes(x = 0, y = 0, xend = rda.env[ ,1], yend = rda.env[ ,2], linetype = factor(type)),
+                         arrow = arrow(length =unit(0.35,"cm"), type = "closed", angle = 22.5),
+                         colour = "darkgrey", size = 0.6) +  # add arrow
+            geom_text_repel(data = rda.env, segment.colour = "black",
+                            aes(x = rda.env[ ,1], 
+                                y = rda.env[ ,2], 
+                                label = c(
+                                  pH = "pH", 
+                                  salt_content = "Salt_content (鈥?)", 
+                                  tc = "TC (%)", 
+                                  tn = "TN (%)", 
+                                  tp = "TP (%)", 
+                                  avail_p = "Avail_P (mg/kg)",
+                                  cnratio = "TC:TN",
+                                  npration = "TN:TP",
+                                  cpration = "TC:TP",
+                                  napration = "TN:Avail_P",
+                                  capration = "TC:Avail_P")), 
+                            nudge_x = 0,
+                            nudge_y = 0, 
+                            size=4) +
+            scale_linetype_manual(name = "Significance", values = c(2, 1), labels = c("No significant", "Significant")) +
+            geom_vline(aes(xintercept = 0), linetype = "dotted") +
+            geom_hline(aes(yintercept = 0), linetype = "dotted") +
+            theme_bw() +
+            #theme(panel.grid=element_blank()) +
+            theme(
+              plot.title = element_text(size = 20, face = "bold",hjust=0.5), 
+              legend.title = element_text(colour = "black",size = 15,face = "bold"),
+              legend.text = element_text(colour = "black",size = 12,face = "bold"),
+              axis.text = element_text(colour = "black",size = 12, face = "bold"),
+              axis.title = element_text(colour = "black",size = 15, face = "bold")) 
+p2_prot
+#ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Protist/otu/cca/Protist-CCA.svg",p2_prot,height = 4, width = 6)
+
+
+# saveRDS(p1_amf,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/pcoa/PCoA_amf.rda")
+# saveRDS(p1_bac,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/pcoa/PCoA_bac.rda")
+# saveRDS(p1_fung,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/pcoa/PCoA_fung.rda")
+# saveRDS(p1_prot,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/pcoa/PCoA_prot.rda")
+# saveRDS(p2_amf,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/rda/RDA_amf.rda")
+# saveRDS(p2_bac,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/rda/RDA_bac.rda")
+# saveRDS(p2_fung,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/rda/RDA_fung.rda")
+# save(p2_prot,rda.env,file="E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/rda/RDA_prot.rda")
+
+amf_ef2$Taxon <- "AMF"
+bac_ef2$Taxon <- "Bacteria"
+fung_ef2$Taxon <- "Fungi"
+prot_ef2$Taxon <- "Protist"
+
+# all_ef <- cbind(amf_ef2, bac_ef2, fung_ef2, prot_ef2)
+# write.csv(all_ef,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/rda/factor_effect.csv")
+
+```{r,fig.align='center', fig.height=8.5, fig.width=12}
+
+p1_all <- (p1_amf + p1_bac + p1_fung + p1_prot) #+
+  # plot_annotation(tag_levels = 'a') &
+  # theme(plot.tag = element_text(size = 20, face = "bold"))
+
+p1_all
+
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/pcoa/PCoA.svg", p1_all, height = 8.5, width = 12.5)
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/pcoa/PCoA.pdf", p1_all, height = 8.5, width = 12.5)
+
+
+p2_all <- (p2_amf + p2_bac + p2_fung + p2_prot) #+
+  # plot_annotation(tag_levels = 'a') &
+  # theme(plot.tag = element_text(size = 20, face = "bold"))
+
+p2_all
+
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/rda/RDA.svg", p2_all, height = 8.5, width = 12.5)
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/rda/RDA.pdf", p2_all, height = 8.5, width = 12.5)
+
+```

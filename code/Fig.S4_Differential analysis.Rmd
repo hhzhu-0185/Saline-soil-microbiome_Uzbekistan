@@ -1,0 +1,589 @@
+---
+title: "Fig.S4_Differential analysis"
+author: "Huanhuan Zhu"
+date: "2024-09-25"
+output: html_document
+---
+
+```{r,fig.align='center', fig.height=4, fig.width=8}
+#############################Fig.S4_Differential analysis##########################
+
+library(DESeq2)
+library(ggplot2)
+library(tidyverse)
+library(patchwork)
+
+### 1. AMF
+rm(list=ls())
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/AMF/otu")
+
+# read group information
+group = read.csv("sample_metadata.csv", header=T, row.names=1) 
+
+group_MC <- group %>% filter(country == "Uzbekistan",plants =="Maize"|plants == "Cotton")
+group_MC$type <- rep("MC",nrow(group_MC))
+
+group_TS <- group %>% filter(country == "Uzbekistan",plants == "Tamarix chinensis"|plants == "Suaeda")
+group_TS$type <- rep("TS",nrow(group_TS))
+
+group2 <- rbind(group_MC,group_TS)
+group2$type <- as.factor(group2$type)
+
+# read otu_table
+otu_table = read.csv("otu_amfFlattening.csv", header=T, row.names=1, check.names=F)
+otu_table <- otu_table[,rownames(group2)]
+otu_table <- otu_table[rowSums(otu_table) > 0,]
+
+# filter otu > 0.0001
+otu_relative <- apply(otu_table, 2, function(x){x/sum(x)})
+threshold = 0.0001
+idx <- rowSums(otu_relative > threshold) >= 1
+otu <- as.data.frame(otu_table[idx, ])
+otu_relative <- as.data.frame(otu_relative[idx, ])
+
+# read taxonomy information
+taxonomy = read.csv("HMME.amf.OTU.ID1.csv", row.names= 1,header=T)
+taxonomy <- taxonomy[match(rownames(otu),taxonomy$OTU.ID),]
+table(taxonomy$OTU.ID ==rownames(otu))
+
+# differential analysi
+# construct DESeqDataSet
+dds <- DESeqDataSetFromMatrix(countData = otu, colData = group2, design = ~type) 
+
+# normalize dds
+dds <- DESeq(dds)
+dds
+
+# extract results using rsults() function in DESeq2
+# contrast: treatment group in front, CK group in back
+group='type'
+control = 'MC'
+treatment ='TS'
+res <- results(dds, contrast=c(group, treatment, control))
+
+# order with pvalue
+res = res[order(res$pvalue),]
+res
+summary(res)
+table(res$padj<0.05)  # check number after fdr corrected
+
+# extract differential OTU
+diff_OTU_deseq2 <-subset(res, padj < 0.05 & abs(log2FoldChange) > 1)
+dim(diff_OTU_deseq2)
+head(diff_OTU_deseq2)
+#write.csv(diff_OTU_deseq2, file= paste("DEOTU_",control,"_vs_",treatment,".csv"))
+
+# calculate average relative abundance
+abundance<-aggregate(t(otu_relative),by=list(group2$type),FUN=mean)
+abundance<-as.data.frame(t(abundance))
+colnames(abundance)<-abundance[1,]
+abundance<-abundance[-1,]
+abundance$MC <- as.numeric(abundance$MC)
+abundance$TS <- as.numeric(abundance$TS)
+
+#abundance<-as.data.frame(lapply(abundance, as.numeric))
+abundance2 <- as.data.frame(apply(abundance, 1, function(x){mean(x)}))
+names(abundance2) <- "abundance"; abundance2$OTU.ID <- rownames(abundance2)
+taxonomy <- merge(taxonomy,abundance2,by="OTU.ID")
+
+# merge data
+test<- as.data.frame(res)
+test$OTU.ID <- row.names(test)
+data <- merge(test, taxonomy,by="OTU.ID",sort=FALSE,all=F)
+# filter data
+data<-data[(data$abundance>0.0001),]
+
+# transform Pvalue涓? as negative logarithm
+data$neglogp = -log10(data$padj)
+# extract column
+data<-as.data.frame(cbind(data$OTU.ID, data$log2FoldChange, data$padj, data$genus, data$abundance, data$neglogp))
+colnames(data)<-c("otu","log2FoldChange","pvalue","Genus","abundance","neglogp")
+
+# change name
+data$Genus <- substr(data$Genus,4,nchar(data$Genus))
+
+# change type as,numeric
+data<-transform(data,  log2FoldChange = as.numeric(log2FoldChange), abundance = as.numeric(abundance), neglogp = as.numeric(neglogp), pvalue= as.numeric(pvalue))
+
+# add label 
+data$level = as.factor(ifelse(data$log2FoldChange>0, "Bareland > Farmland","Farmland > Bareland"))
+#write.csv(data, file= paste("OTU",control,"_vs_",treatment,".csv"))
+
+
+# plot Manhattan
+Title=paste("AMF")
+
+# col<-c("#0000FF","#FF3399","#FFCC33","#ff00ff","#00ff00", "deepskyblue", "darkgreen","black", "maroon3",   "grey")
+col<-c("green","#FF3399","blue","purple","black","darkgreen","chocolate", "red","deepskyblue","grey")
+
+select <- as.data.frame(table(data[data$pvalue < 0.05,]$Genus))[,1]
+data <- data[data$Genus %in% select,]
+data <- na.omit(data)
+#data <- data[data$log2FoldChange > 2.5|data$log2FoldChange < -2.5,]
+
+set.seed(123)
+p <-  
+      ggplot(data, aes(x=factor(Genus, levels = c("Paraglomus", "Archaeospora", "Ambispora", "Claroideoglomus", "Glomus", "Scutellospora", "Gigaspora", "Diversispora")), 
+                       y = neglogp, color = factor(Genus, levels = c("Paraglomus", "Archaeospora", "Ambispora", "Claroideoglomus", "Glomus", "Scutellospora","Gigaspora", "Diversispora")), 
+                       shape = level, size = abundance)) +
+      geom_hline(yintercept = -log10(0.05), linetype = 2, color = "lightgrey") +  # Add a significant threshold line
+      geom_point(alpha = .5,position=position_jitter(0.5),stroke=1) +  # plot scatter plot, position dispersion degree, line thickness of broder of
+      scale_color_manual(name="Genus", values = col) +
+      scale_shape_manual(values=c(1, 2)) +  # Bareland>Farmland, circle; Farmland>Bareland, triangle
+      #scale_size(breaks=c(4, 8)) +
+      guides(
+              color = guide_legend(override.aes = list(size=4),order=1),
+              size = guide_legend(override.aes = list(shape = c(1)),order=2),
+              shape = guide_legend(override.aes = list(size=4),order=3)) +
+      labs(x=NULL, y = bquote(bold(-log[10]*"("*italic("P")*")")),title=Title, size="Abundance (%)", shape ="Contrast") +
+      theme_classic() + 
+      theme(
+            legend.position="right",
+            panel.grid = element_blank(),
+            axis.text.x = element_blank(),
+            axis.ticks.x = element_blank(), 
+            plot.title = element_text(size = 20, face = "bold",hjust=0.5), 
+            legend.title = element_text(colour = "black",size = 15,face = "bold"),
+            legend.text = element_text(colour = "black",size = 12,face = "bold"),
+            axis.text = element_text(colour = "black",size = 12, face = "bold"),
+            axis.title.y = element_text(colour = "black",size = 15, face = "bold"), 
+            legend.spacing.y = unit(0, "cm"),
+            #legend.spacing.x = unit(0.2, "cm")
+          )
+
+p
+p_amf <-p
+#ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/AMF/otu/DA/AMF-manhattan.pdf",p,height = 5, width = 8)
+
+
+### 2. Bacteria
+rm(list = setdiff(ls(), "p_amf"))
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Bacteria/otu")
+
+# read group information
+group = read.csv("sample_metadata.csv", header=T, row.names=1) 
+
+group_MC <- group %>% filter(country == "Uzbekistan",plants=="Maize"|plants=="Cotton")
+group_MC$type <- rep("MC",nrow(group_MC))
+
+group_TS <- group %>% filter(country == "Uzbekistan",plants=="Tamarix chinensis"|plants=="Suaeda")
+group_TS$type <- rep("TS",nrow(group_TS))
+
+group2 <- rbind(group_MC,group_TS)
+group2$type <- as.factor(group2$type)
+
+# read otu table
+otu_table = read.csv("otu_bacteriaFlattening.csv", header=T, row.names=1, check.names=F)
+otu_table <- otu_table[,rownames(group2)]
+otu_table <- otu_table[rowSums(otu_table) > 0,]
+
+# filter otu
+otu_relative <- apply(otu_table, 2, function(x){x/sum(x)})
+threshold = 0.0001
+idx <- rowSums(otu_relative > threshold) >= 1
+otu <- as.data.frame(otu_table[idx, ])
+otu_relative <- as.data.frame(otu_relative[idx, ])
+
+# read taxonomy
+taxonomy = read.csv("HMME.bact.OTU.ID1.csv", row.names= 1,header=T)
+taxonomy <- taxonomy[match(rownames(otu),taxonomy$OTU.ID),]
+table(taxonomy$OTU.ID ==rownames(otu))
+
+# differential analysis
+dds <- DESeqDataSetFromMatrix(countData = otu, colData = group2, design = ~type) 
+
+# normaliz
+dds <- DESeq(dds)
+dds
+
+# extract results
+group='type'
+control = 'MC'
+treatment ='TS'
+res <- results(dds, contrast=c(group, treatment, control))
+
+# order results by P value
+res = res[order(res$pvalue),]
+res
+summary(res)
+table(res$padj<0.05)
+
+# extract differential OTU
+diff_OTU_deseq2 <-subset(res, padj < 0.05 & abs(log2FoldChange) > 1)
+dim(diff_OTU_deseq2)
+head(diff_OTU_deseq2)
+#write.csv(diff_OTU_deseq2, file= paste("DEOTU_",control,"_vs_",treatment,".csv"))
+
+# calculate average relative abundance
+abundance<-aggregate(t(otu_relative),by=list(group2$type),FUN=mean)
+abundance<-as.data.frame(t(abundance))
+colnames(abundance)<-abundance[1,]
+abundance<-abundance[-1,]
+abundance$MC <- as.numeric(abundance$MC)
+abundance$TS <- as.numeric(abundance$TS)
+
+#abundance<-as.data.frame(lapply(abundance, as.numeric))
+abundance2 <- as.data.frame(apply(abundance, 1, function(x){mean(x)}))
+names(abundance2) <- "abundance"; abundance2$OTU.ID <- rownames(abundance2)
+taxonomy <- merge(taxonomy,abundance2,by="OTU.ID")
+
+# merge data
+test<- as.data.frame(res)
+test$OTU.ID <- row.names(test)
+data <- merge(test, taxonomy,by="OTU.ID",sort=FALSE,all=F)
+data<-data[(data$abundance>0.0005),]
+
+# transform p value
+data$neglogp = -log10(data$padj)
+
+data<-as.data.frame(cbind(data$OTU.ID, data$log2FoldChange, data$padj, data$V5_2, data$abundance, data$neglogp))
+colnames(data)<-c("otu","log2FoldChange","pvalue","Phylum","abundance","neglogp")
+
+#data$Genus <- substr(data$Genus,4,nchar(data$Genus))
+
+# change data type
+data<-transform(data, log2FoldChange = as.numeric(log2FoldChange),abundance = as.numeric(abundance), neglogp = as.numeric(neglogp), pvalue= as.numeric(pvalue))
+
+# label differential OTU 
+data$level = as.factor(ifelse(data$log2FoldChange>0, "Bareland > Farmland","Farmland > Bareland"))
+#write.csv(data, file= paste("OTU",control,"_vs_",treatment,".csv"))
+
+# plot Manhattan
+# data[data$neglogp>30,]$neglogp  = 30
+Title=paste("Bacteria")
+
+#col<-c("#0000FF","#FF3399","#FFCC33","#ff00ff","#00ff00", "deepskyblue", "darkgreen","black", "maroon3",   "grey")
+col<-c("green","#FF3399","blue","#FFCC33","purple","black","darkgreen","chocolate", "red","deepskyblue","grey")
+
+select <- as.data.frame(table(data[data$pvalue < 0.05,]$Phylum))[,1]
+data <- data[data$Phylum %in% select,]
+#data <- data[data$log2FoldChange > 2.5|data$log2FoldChange < -2.5,]
+data <- na.omit(data)
+
+set.seed(123)
+p <-  
+      ggplot(data, aes(x=Phylum, y=neglogp, color=Phylum, shape=level, size=abundance)) +
+      geom_hline(yintercept=-log10(0.05), linetype=2, color="lightgrey") + 
+      geom_point(alpha=.5,position=position_jitter(0.5),stroke=1) +  
+      geom_text(data = subset(data, neglogp > 5), aes(label = otu), col= "red", size = 3, vjust = 2, hjust=0.8) +
+      scale_color_manual(values = col) +
+      scale_shape_manual(values=c(1, 2)) + 
+      #scale_size(breaks=c(4, 8)) +
+      guides(
+              color = guide_legend(override.aes = list(size=4),order=1),
+              size = guide_legend(override.aes = list(shape = c(1)),order=2),
+              shape = guide_legend(override.aes = list(size=4),order=3)) +
+      labs(x=NULL, y = bquote(bold(-log[10]*"("*italic("P")*")")),title=Title, size="Abundance (%)", shape ="Contrast") +
+      theme_classic() + 
+      theme(
+            legend.position="right",
+            panel.grid = element_blank(),
+            axis.text.x = element_blank(),
+            axis.ticks.x = element_blank(), 
+            plot.title = element_text(size = 20, face = "bold",hjust=0.5), 
+            legend.title = element_text(colour = "black",size = 15,face = "bold"),
+            legend.text = element_text(colour = "black",size = 12,face = "bold"),
+            axis.text = element_text(colour = "black",size = 12, face = "bold"),
+            axis.title = element_text(colour = "black",size = 15, face = "bold"), 
+            legend.spacing.y = unit(0, "cm"),
+            #legend.spacing.x = unit(0.2, "cm")
+          )
+
+p
+p_bac <- p
+#ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Bacteria/otu/DA/Bacteria-manhattan.pdf",p,height = 5, width = 8)
+
+
+### 3. Fungi
+rm(list = setdiff(ls(), c("p_amf","p_bac")))
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Fungi/otu")
+
+# read group information
+group = read.csv("sample_metadata.csv", header=T, row.names=1) 
+
+group_MC <- group %>% filter(country == "Uzbekistan",plants=="Maize"|plants=="Cotton")
+group_MC$type <- rep("MC",nrow(group_MC))
+
+group_TS <- group %>% filter(country == "Uzbekistan",plants=="Tamarix chinensis"|plants=="Suaeda")
+group_TS$type <- rep("TS",nrow(group_TS))
+
+group2 <- rbind(group_MC,group_TS)
+group2$type <- as.factor(group2$type)
+
+# read otu_table
+otu_table = read.csv("otu_fungiFlattening.csv", header=T, row.names=1, check.names=F)
+otu_table <- otu_table[,rownames(group2)]
+otu_table <- otu_table[rowSums(otu_table) > 0,]
+
+# filter otu
+otu_relative <- apply(otu_table, 2, function(x){x/sum(x)})
+threshold = 0.0001
+idx <- rowSums(otu_relative > threshold) >= 1
+otu <- as.data.frame(otu_table[idx, ])
+otu_relative <- as.data.frame(otu_relative[idx, ])
+
+# read taxonomy
+taxonomy = read.csv("HMME.fung.OTU.ID1.csv", row.names= 1,header=T)
+taxonomy <- taxonomy[match(rownames(otu),taxonomy$OTU.ID),]
+table(taxonomy$OTU.ID ==rownames(otu))
+
+# differential nanlysis
+
+dds <- DESeqDataSetFromMatrix(countData = otu, colData = group2, design = ~type) 
+dds <- DESeq(dds)
+dds
+
+# extract results
+group='type'
+control = 'MC'
+treatment ='TS'
+res <- results(dds, contrast=c(group, treatment, control))
+
+# order by P value
+res = res[order(res$pvalue),]
+res 
+summary(res)
+table(res$padj<0.05)
+
+# extract differential OTUs
+diff_OTU_deseq2 <-subset(res, padj < 0.05 & abs(log2FoldChange) > 1)
+dim(diff_OTU_deseq2)
+head(diff_OTU_deseq2)
+#write.csv(diff_OTU_deseq2, file= paste("DEOTU_",control,"_vs_",treatment,".csv"))
+
+# calculate average relative abundance
+abundance<-aggregate(t(otu_relative),by=list(group2$type),FUN=mean)
+abundance<-as.data.frame(t(abundance))
+colnames(abundance)<-abundance[1,]
+abundance<-abundance[-1,]
+abundance$MC <- as.numeric(abundance$MC)
+abundance$TS <- as.numeric(abundance$TS)
+
+#abundance<-as.data.frame(lapply(abundance, as.numeric))
+abundance2 <- as.data.frame(apply(abundance, 1, function(x){mean(x)}))
+names(abundance2) <- "abundance"; abundance2$OTU.ID <- rownames(abundance2)
+taxonomy <- merge(taxonomy,abundance2,by="OTU.ID")
+
+# merge data
+test<- as.data.frame(res)
+test$OTU.ID <- row.names(test)
+data <- merge(test, taxonomy,by="OTU.ID",sort=FALSE,all=F)
+data<-data[(data$abundance>0.0005),]
+
+# transform P value
+data$neglogp = -log10(data$padj)
+data<-as.data.frame(cbind(data$OTU.ID, data$log2FoldChange, data$padj, data$V5_3, data$abundance, data$neglogp))
+colnames(data)<-c("otu","log2FoldChange","pvalue","Class","abundance","neglogp")
+
+data$Class <- substr(data$Class,4,nchar(data$Class))
+
+# change value type as numeric
+data<-transform(data, log2FoldChange = as.numeric(log2FoldChange),abundance = as.numeric(abundance), neglogp = as.numeric(neglogp), pvalue= as.numeric(pvalue))
+
+# add label 
+data$level = as.factor(ifelse(data$log2FoldChange>0, "Bareland > Farmland","Farmland > Bareland"))
+#write.csv(data, file= paste("OTU",control,"_vs_",treatment,".csv"))
+
+
+# plot manhattan
+
+# data[data$neglogp>30,]$neglogp  = 30
+Title=paste("Fungi")
+
+#col<-c("#0000FF","#FF3399","#FFCC33","#ff00ff","#00ff00", "deepskyblue", "darkgreen","black", "maroon3",   "grey")
+col<-c("green","#FF3399","blue","#FFCC33","purple","black","darkgreen","chocolate", "red","deepskyblue","grey")
+
+select <- as.data.frame(table(data[data$pvalue < 0.05,]$Class))[,1]
+data <- data[data$Class %in% select,]
+#data <- data[data$log2FoldChange > 2.5|data$log2FoldChange < -2.5,]
+data <- na.omit(data)
+
+set.seed(123)
+p <-  
+      ggplot(data, aes(x=Class, y=neglogp, color=Class, shape=level, size=abundance)) +
+      geom_hline(yintercept=-log10(0.05), linetype=2, color="lightgrey") + 
+      geom_point(alpha=.5,position=position_jitter(0.5),stroke=1) +  
+      geom_text(data = subset(data, neglogp > 10), aes(label = otu), size = 3, vjust = 2, hjust=0.8) +
+      scale_color_manual(values = col) +
+      scale_shape_manual(values=c(1, 2)) +  
+      #scale_size(breaks=c(4, 8)) +
+      guides(
+              color = guide_legend(override.aes = list(size=4),order=1),
+              size = guide_legend(override.aes = list(shape = c(1)),order=2),
+              shape = guide_legend(override.aes = list(size=4),order=3)) +
+      labs(x=NULL, y = bquote(bold(-log[10]*"("*italic("P")*")")),title=Title, size="Abundance (%)", shape ="Contrast") +  
+      theme_classic() +  
+      theme(
+            legend.position="right", 
+            panel.grid = element_blank(), 
+            axis.text.x = element_blank(), 
+            axis.ticks.x = element_blank(), 
+            plot.title = element_text(size = 20, face = "bold",hjust=0.5), 
+            legend.title = element_text(colour = "black",size = 15,face = "bold"),
+            legend.text = element_text(colour = "black",size = 12,face = "bold"),
+            axis.text = element_text(colour = "black",size = 12, face = "bold"),
+            axis.title = element_text(colour = "black",size = 15, face = "bold"), 
+            legend.spacing.y = unit(0, "cm"),
+            #legend.spacing.x = unit(0.2, "cm")
+          )
+
+p
+p_fung <- p
+#ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Fungi/otu/DA/Fungi-manhattan.pdf",p,height = 5, width = 8)
+
+
+### 4. Protist
+rm(list = setdiff(ls(), c("p_amf", "p_bac", "p_fung")))
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Protist/otu")
+
+# read group data
+group = read.csv("sample_metadata.csv", header=T, row.names= 1) 
+
+group_MC <- group %>% filter(country == "Uzbekistan",plants=="Maize"|plants=="Cotton")
+group_MC$type <- rep("MC",nrow(group_MC))
+
+group_TS <- group %>% filter(country == "Uzbekistan",plants=="Tamarix chinensis"|plants=="Suaeda")
+group_TS$type <- rep("TS",nrow(group_TS))
+
+group2 <- rbind(group_MC,group_TS)
+group2$type <- as.factor(group2$type)
+
+# read otu_table
+otu_table = read.csv("otu_protistFlattening.csv", header=T, row.names= 1, check.names=F)
+otu_table <- otu_table[,rownames(group2)]
+otu_table <- otu_table[rowSums(otu_table) > 0,]
+
+# filter otu
+otu_relative <- apply(otu_table, 2, function(x){x/sum(x)})
+threshold = 0.0001
+idx <- rowSums(otu_relative > threshold) >= 1
+otu <- as.data.frame(otu_table[idx, ])
+otu_relative <- as.data.frame(otu_relative[idx, ])
+
+# read taxonomy
+taxonomy = read.csv("HMME.prot.OTU.ID1.csv", row.names= 1,header=T)
+taxonomy <- taxonomy[match(rownames(otu),taxonomy$OTU.ID),]
+table(taxonomy$OTU.ID ==rownames(otu))
+
+# differentail analysis
+dds <- DESeqDataSetFromMatrix(countData = otu, colData = group2, design = ~type) 
+
+dds <- DESeq(dds)
+dds
+
+# extract results
+group='type'
+control = 'MC'
+treatment ='TS'
+res <- results(dds, contrast=c(group, treatment, control))
+
+# order results by P value
+res = res[order(res$pvalue),]
+res
+summary(res)
+table(res$padj<0.05)
+
+# extract differential OTUs
+diff_OTU_deseq2 <-subset(res, padj < 0.05 & abs(log2FoldChange) > 1)
+dim(diff_OTU_deseq2)
+head(diff_OTU_deseq2)
+#write.csv(diff_OTU_deseq2, file= paste("DEOTU_",control,"_vs_",treatment,".csv"))
+
+# calculate average relative abundance
+abundance<-aggregate(t(otu_relative),by=list(group2$type),FUN=mean)
+abundance<-as.data.frame(t(abundance))
+colnames(abundance)<-abundance[1,]
+abundance<-abundance[-1,]
+abundance$MC <- as.numeric(abundance$MC)
+abundance$TS <- as.numeric(abundance$TS)
+
+#abundance<-as.data.frame(lapply(abundance, as.numeric))
+abundance2 <- as.data.frame(apply(abundance, 1, function(x){mean(x)}))
+names(abundance2) <- "abundance"; abundance2$OTU.ID <- rownames(abundance2)
+taxonomy <- merge(taxonomy,abundance2,by="OTU.ID")
+
+# merge data
+test<- as.data.frame(res)
+test$OTU.ID <- row.names(test)
+data <- merge(test, taxonomy,by="OTU.ID",sort=FALSE,all=F)
+data<-data[(data$abundance>0.0005),]
+
+# transform P value
+data$neglogp = -log10(data$padj)
+data<-as.data.frame(cbind(data$OTU.ID, data$log2FoldChange, data$padj, data$V5_3, data$abundance, data$neglogp))
+colnames(data)<-c("otu","log2FoldChange","pvalue","Phylum","abundance","neglogp")
+
+
+data$Phylum <- substr(data$Phylum,3,nchar(data$Phylum))
+
+# change value type as numeric
+data<-transform(data, log2FoldChange = as.numeric(log2FoldChange),abundance = as.numeric(abundance), neglogp = as.numeric(neglogp), pvalue= as.numeric(pvalue))
+
+# add labels
+data$level = as.factor(ifelse(data$log2FoldChange>0, "Bareland > Farmland","Farmland > Bareland"))
+#write.csv(data, file= paste("OTU",control,"_vs_",treatment,".csv"))
+
+# plot manhattan
+
+# data[data$neglogp>30,]$neglogp  = 30
+Title=paste("Protists")
+
+#col<-c("#0000FF","#FF3399","#FFCC33","#ff00ff","#00ff00", "deepskyblue", "darkgreen","black", "maroon3",   "grey")
+col<-c("green","#FF3399","blue","#FFCC33","purple","black","darkgreen","chocolate", "red","deepskyblue","grey")
+
+select <- as.data.frame(table(data[data$pvalue < 0.05,]$Phylum))[,1]
+data <- data[data$Phylum %in% select,]
+#data <- data[data$log2FoldChange > 2.5|data$log2FoldChange < -2.5,]
+data <- na.omit(data)
+
+set.seed(123)
+
+p <-  
+      ggplot(data, aes(x=Phylum, y=neglogp, color=Phylum, shape=level, size=abundance)) +
+      geom_hline(yintercept=-log10(0.05), linetype=2, color="lightgrey") + 
+      geom_point(alpha=.5,position=position_jitter(0.5),stroke=1) + 
+      scale_color_manual(values = col) +
+      scale_shape_manual(values=c(1, 2)) +
+      #scale_size(breaks=c(4, 8)) +
+      guides(
+              color = guide_legend(override.aes = list(size=4),order=1),
+              size = guide_legend(override.aes = list(shape = c(1)),order=2),
+              shape = guide_legend(override.aes = list(size=4),order=3)) +
+      labs(x=NULL, y = bquote(bold(-log[10]*"("*italic("P")*")")),title=Title, size="Abundance (%)", shape ="Contrast") + 
+      theme_classic() +
+      theme(
+            legend.position="right",
+            panel.grid = element_blank(),
+            axis.text.x = element_blank(),
+            axis.ticks.x = element_blank(), 
+            plot.title = element_text(size = 20, face = "bold",hjust=0.5), 
+            legend.title = element_text(colour = "black",size = 15,face = "bold"),
+            legend.text = element_text(colour = "black",size = 12,face = "bold"),
+            axis.text = element_text(colour = "black",size = 12, face = "bold"),
+            axis.title = element_text(colour = "black",size = 15, face = "bold"), 
+            legend.spacing.y = unit(0, "cm"),
+            #legend.spacing.x = unit(0.2, "cm")
+          )
+
+p
+p_prot <- p
+#ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Protist/otu/DA/Protist-manhattan.pdf",p,height = 5, width = 8)
+
+# saveRDS(p_amf,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/diffenertial/amf.rda")
+# saveRDS(p_bac,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/diffenertial/bac.rda")
+# saveRDS(p_fung,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/diffenertial/fung.rda")
+# saveRDS(p_prot,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/diffenertial/prot.rda")
+
+p_all <- p_amf + p_bac + p_fung + p_prot +
+  plot_annotation(tag_levels = 'a') &
+  theme(plot.tag = element_text(size = 26, face = "bold"))
+
+
+# saveRDS(p_all,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/diffenertial/differential_otus.rda")
+# 
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/diffenertial/differential_otus.pdf", p_all, height = 10, width = 18)
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/diffenertial/differential_otus.svg", p_all, height = 10, width = 18)
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/diffenertial/differential_otus.png", p_all, height = 10, width = 18)
+
+```
+

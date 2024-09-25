@@ -1,0 +1,871 @@
+---
+title: "Fig.4 & Fig.S10_Co-occurrance_network"
+author: "Huanhuan Zhu"
+date: "2024-09-25"
+output: html_document
+---
+
+```{r,fig.align='center', fig.height=4, fig.width=6}
+#############################Fig.4 & Fig.S10_Co-occurrance_network##########################
+
+library(vegan)
+library(psych)  # corr.test()for r and P of paired OTUs
+library(igraph)
+library(ggplot2)
+library(colorRamps)
+library(ape)
+library(stringr)
+library(reshape2)
+library(splitstackshape)
+library(emmeans)
+library(graphics)
+library(phyloseq)
+library(dplyr)
+library(ggraph)
+library(pals)
+library(RColorBrewer)
+library(patchwork)
+library(scales)  # pencentage of Y axis
+
+
+### 1. AMF
+
+rm(list=ls())
+amf.network<-function(k,para){  # k for selecting MC(maize & cotton) or TS (Tamarix & Suaeda)
+
+  setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/AMF/otu/")
+  
+  # Reading OTU table & metadata file
+  otu_all <-read.csv("otu_amfFlattening.csv", row.names = 1, check.names = F, header = T)
+  group <- read.csv("sample_metadata.csv", header = T)
+  #group <- na.omit(group)
+  
+  group_MC <- group %>%
+    filter(country == "Uzbekistan",plants=="Maize"|plants=="Cotton")
+  group_MC$type <- rep("MC",nrow(group_MC))
+  
+  group_TS <- group %>%
+    filter(country == "Uzbekistan",plants=="Tamarix chinensis"|plants=="Suaeda")
+  group_TS$type <- rep("TS",nrow(group_TS))
+  
+  group2 <- rbind(group_MC,group_TS)
+  
+  env0 <- group2[order(group2$sample.id), ]
+  
+  ID0 <-read.csv("HMME.amf.OTU.ID1.csv", check.names = F, row.names = 1, header = T)
+  names(ID0)[21] <- "Genus"
+  ID0$Genus <- substr(ID0$Genus, 4, nchar(ID0$Genus))
+  
+  # Set node color
+  color <- c(
+              "Acaulospora" = "#ff00ff"
+              , "Ambispora" = "#00ff00"
+              , "Archaeospora" = "deepskyblue"
+              , "Claroideoglomus" = "gold"
+              , "Diversispora" = "red"
+              , "Geosiphon " = "navy"
+              , "Gigaspora" = "darkgreen"
+              , "Glomus" = "maroon3"
+              , "Kuklospora" = "black"
+              , "Paraglomus" = "bisque"
+              , "Scutellospora" = "blue")
+  
+  test <- as.data.frame(rowSums(otu_all))
+  test$id <- rownames(test)
+  test2 <- test[order(test$`rowSums(otu_all)`,decreasing = T),]
+  otu_all <- otu_all[test2[test2$`rowSums(otu_all)`>= sum(test2$`rowSums(otu_all)`)*0.000,]$id,]
+  
+  #Subset data
+  env.tmp<-env0[env0$type==k,]
+
+  otu_all2 <- otu_all[,colnames(otu_all) %in% env.tmp$sample.id]
+  ID.tmp0<-ID0[ID0$OTU.ID %in% colnames(otu_all),]
+  
+  # Remove OTUs that are less than 5 sequences in all samples and at least exist in 2 samples(20%)
+  otu <- t(otu_all2)[,specnumber(otu_all2) >= ncol(otu_all2)*para & colSums(t(otu_all2)) > 4]
+  
+  otu2 <- otu_all2[colnames(otu),]
+  otu2$otusum <- rowSums(otu2)  
+  otu2$abu <- otu2$otusum/sum(otu2$otusum)
+  
+  # Spearman's Rho calculation
+  spman.r0 = corr.test(otu, use="pairwise",method="spearman",adjust="fdr", alpha = .05, ci=FALSE)
+  
+  # Matrix to dataframe
+  Cor<-as.matrix(spman.r0$r)  
+  Cor[lower.tri(Cor)] <- NA  # Keep upper triangle
+  diag(Cor) <- NA  # Remove diagnoal
+  Cor.df <- reshape2::melt(Cor, na.rm = TRUE)  # Long format
+  
+  P0<-as.matrix(spman.r0$p)
+  P0[lower.tri(P0)] <- NA
+  diag(P0) <- NA
+  P.df <- reshape2::melt(P0, na.rm = TRUE) 
+  
+  df <- merge(Cor.df, P.df, by=c("Var1","Var2"))
+  names(df) <- c("row","col","Cor","p")
+  
+  # Spearman's rho > 0.6 & p-value < 0.05 to select edges in network
+  da.tmp <- df.sig <- filter(df, abs(Cor) >= 0.6, p < 0.05)
+
+  da.g1 <- data.frame(da.tmp)
+  #da.g1 <- na.omit(da.g1)
+  
+  # Construct igraph g for plotting co-occurence network
+  g <- graph_from_data_frame(da.g1, directed=FALSE, vertices = NULL)
+  
+  fc <- cluster_fast_greedy(g)  # Cluster by fast greedy for modularity
+  print(modularity(fc))  # >0.4 indicate modular structures
+  modularity(fc,membership(fc))
+  print(sizes(fc))
+
+  # Whole network properties
+  net.metrics <- matrix(nrow=22,ncol=1)
+  net.metrics[1,1] <- length(E(g))  # length(curve_multiple(funteria.fungi.archea.g))
+  net.metrics[2,1] <- length(V(g))
+  #net.fun.metrics[3,1] <- connectedness(as.matrix(as_adjacency_matrix(igraph, type = c("both"))))  # connectedness FROM sna package; This package will affect other network properties
+  net.metrics[4,1] <- edge_density(g,loops=FALSE)
+  net.metrics[5,1] <- mean(igraph::degree(g))
+  net.metrics[6,1] <- average.path.length(g) 
+  net.metrics[7,1] <- diameter(g, directed = FALSE, unconnected = TRUE, weights = NA)
+  net.metrics[8,1] <- edge_connectivity(g)
+  net.metrics[9,1] <- vertex_connectivity(g)
+  net.metrics[10,1] <- cohesion(g)
+  net.metrics[11,1] <- transitivity(g)
+  net.metrics[12,1] <- no.clusters(g)
+  net.metrics[13,1] <- sum(graph.knn(g)$knn[!is.na(graph.knn(g)$knn)])/length(V(g))
+  net.metrics[14,1] <- centralization.closeness(g)$centralization
+  net.metrics[15,1] <- centralization.betweenness(g)$centralization
+  net.metrics[16,1] <- centralization.degree(g)$centralization
+  net.metrics[17,1] <- assortativity.degree(g)
+  fc <- cluster_fast_greedy(g)
+  net.metrics[18,1] <- modularity(g,membership(fc))
+  net.metrics[19,1] <- mean(igraph::betweenness(g))
+  net.metrics[20,1] <- diameter(g, directed = FALSE, unconnected = TRUE)
+  net.metrics[21,1] <- sum(E(g)$Cor>0)  # number of positive correlation
+  net.metrics[22,1] <- sum(E(g)$Cor<0)  # number of negative correlation
+  
+  rownames(net.metrics) <- c("num.edges","num.vertices","connectedness","connectance","average.degree","average.path.length","diameter",
+                           "edge_connectivity","vertex.connectivity","cohesion","clustering.coefficient","no.clusters","avenei","centralization.closeness",
+                           "centralization.betweenness","centralization.degree","assortativity.degree","modularity","average.betweenness","w.diameter","no.positive","no.negative")
+  colnames(net.metrics) <- k
+  print(net.metrics)
+  
+  net.metrics <- as.data.frame(net.metrics)
+  #net.metrics$name <- rownames(net.metrics)
+  net.metrics1 <<- net.metrics
+  
+  # Parameters for plot, parameters for E(g) is parameters for da.g1, reset parameters for V(g)
+  # set vertices size
+  v.size <- otu2[V(g)$name, ]  # V(g)$name, name of all vertices
+  v.size1 = log(v.size$abu * 100000)  # origin value*100, then e-logarithm (to show logarithmic differences in the data)
+  V(g)$size =  abs(v.size1)
+  
+  # set edge color, postive correlation to red, negative correlation to blue
+  E.color <-  E(g)$Cor
+  E.color = ifelse(E.color > 0, "red",ifelse(E.color < 0, "blue", "grey"))
+  E(g)$color = as.character(E.color) 
+  
+  # color by Vertices/node with genus
+  V(g)$genus <- ID0$Genus[match(V(g)$name, ID0$OTU.ID)]  # match find which rows of ID match to names of V(g); first element in second element
+  #V(g)$color <- ID0$color[match(V(g)$name, ID0$OTU.ID)]
+
+  # Set edge width
+  E(g)$width = abs(E(g)$Cor)
+  
+  # Set title
+  # title=paste("AMF",k,sep="-")
+  name <- c("MC" = "Farmland", "TS" = "Wildland")
+  
+ # Plot with ggraph
+  set.seed(123)
+  p1 <<-  ggraph(g, layout = "nicely") + 
+          geom_edge_bend(aes(width = abs(E(g)$Cor), color = E(g)$color), strength = 0.2) +  # strength for curvature
+          scale_edge_colour_manual(values= c("blue"="blue", "red"="red")) +
+          scale_edge_width_continuous(range = c(0.5, 1.2)) +  # Sets the thickness range of the edge
+          geom_node_point(aes(color = factor(V(g)$genus), size = V(g)$size)) +
+          scale_colour_manual(name = "Genus",values = color) +
+          scale_size_continuous(range = c(1,5)) +
+          #geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
+          labs(title=sprintf("AMF-%s",name[k]),
+               subtitle =  sprintf("Vertice = %d; Edge = %d; Average degree = %g", 
+                                   net.metrics["num.vertices", ], 
+                                   net.metrics["num.edges", ], 
+                                   round(net.metrics["average.degree", ], 2))) +
+          guides(edge_colour = "none", edge_width = "none", size = "none") +
+          theme_void() +
+            theme(
+              plot.margin = unit(c(0.5, 0.5, 0.5, 0.5), "cm"), 
+              plot.title = element_text(size = 20, face = "bold",hjust=0.5, margin = margin(b = 10)),
+              plot.subtitle = element_text(size = 12, face = "bold",hjust=0.5, color="red", margin = margin(b = 10)), 
+              legend.title = element_text(colour = "black", size = 15,face = "bold"),
+              legend.text = element_text(colour = "black", size = 12,face = "bold"))  
+  p1
+}
+
+
+amf.network("MC", 0.2)
+net.metrics <- net.metrics1
+p_amf_mc <- p1
+amf.network("TS", 0.2)
+net.metrics$TS <- net.metrics1$TS
+p_amf_ts <- p1
+
+property <- function(title, para){
+  net.metrics <- net.metrics[c("num.edges", "num.vertices", "no.positive", "no.negative"),]
+  
+  positive_percent <- net.metrics["no.positive", ] / (net.metrics["no.negative", ] + net.metrics["no.positive", ])
+  rownames(positive_percent) <- "positive_percent"
+  
+  net.metrics <- rbind(positive_percent, net.metrics)
+  net.metrics <- as.data.frame(t(net.metrics))
+  net.metrics$id <- rownames(net.metrics)
+  net.metrics$id2 <- "same"
+  
+  
+  p2 <<- ggplot(net.metrics ) +
+    geom_point(aes(x = factor(id), y = num.edges, color = "value1"), size = 3, alpha = 0.6) +
+    geom_line(aes(x = factor(id), y = num.edges, group = id2, color = "value1", linetype = "Primary"), size = 1,alpha = 0.6) +
+    geom_point(aes(x = factor(id), y = num.vertices, color = "value2"), size = 3, alpha = 0.6) +
+    geom_line(aes(x = factor(id), y = num.vertices, group = id2, color = "value2", linetype = "Primary"), size = 1,alpha = 0.6) +
+    geom_point(aes(x = factor(id), y = no.positive, color = "value3"), size = 3,alpha = 0.6) +
+    geom_line(aes(x = factor(id), y = no.positive, group = id2, color = "value3", linetype = "Primary"), size = 1,alpha = 0.6) +
+    geom_point(aes(x = factor(id), y = no.negative, color = "value4"), size = 3,alpha = 0.6) +
+    geom_line(aes(x = factor(id), y = no.negative, group = id2, color = "value4", linetype = "Primary"), size = 1,alpha = 0.6) +
+    geom_point(aes(x = factor(id), y = positive_percent * para, color = "value5"), size = 3,alpha = 0.6) +
+    geom_line(aes(x = factor(id), y = positive_percent * para, group = id2, color = "value5", linetype = "Secondary"), size = 1,alpha = 0.6) +
+    scale_x_discrete(labels = c("MC" = "Farmland", "TS" = "Wildland" )) +
+    scale_y_continuous(
+      limits = c(0,para), name = "Value",
+      sec.axis = sec_axis(~ . / para * 100, name = "Percentage",labels = label_percent(scale = 1))) +
+    scale_color_manual(values = c(
+                                  "value1" = "#E41A1C",
+                                  "value2" = "#377EB8",
+                                  "value3" = "#4DAF4A",
+                                  "value4" = "#984EA3",
+                                  "value5" = "black" ),
+                        labels =c(
+                                  "value1" = "Edges",
+                                  "value2" = "Vertices",
+                                  "value3" = "No.positive",
+                                  "value4" = "No.negative",
+                                  "value5" = "Positive percentage" 
+                                )) +
+    scale_linetype_manual(values = c("Primary" = "solid", "Secondary" = "dashed" ),guide = "none") +
+    labs(title = paste0(title,"-Network property"),y="Value",x="Habitat",color="Network property") +
+    theme_bw() +
+    theme(
+      plot.title = element_text(size = 20, face = "bold",hjust=0.5), 
+      legend.title = element_text(colour = "black", size = 15,face = "bold"),
+      legend.text = element_text(colour = "black", size = 12,face = "bold"),
+      strip.text = element_blank(), 
+      axis.text = element_text(colour = "black", size = 12, face = "bold"),
+      axis.title = element_text(colour = "black", size = 15, face = "bold"),
+      axis.title.x = element_blank()
+    ) 
+  p2
+}
+
+property("AMF",20)  # 6,3.5
+p_amf_prop <- p2
+
+
+### 2. Bacteria
+
+rm(list=setdiff(ls(), c("property",
+                        "p_amf_mc", "p_amf_ts", "p_amf_prop")))
+
+bacteria.network<-function(k,para){
+  
+  setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Bacteria/otu/")
+  
+  otu_all <-read.csv("otu_bacteriaFlattening.csv", row.names = 1, check.names = F, header = T)
+  group <- read.csv("sample_metadata.csv", header = T)
+  #group <- na.omit(group)
+  
+  group_MC <- group %>%
+    filter(country == "Uzbekistan",plants=="Maize"|plants=="Cotton")
+  group_MC$type <- rep("MC",nrow(group_MC))
+  
+  group_TS <- group %>%
+    filter(country == "Uzbekistan",plants=="Tamarix chinensis"|plants=="Suaeda")
+  group_TS$type <- rep("TS",nrow(group_TS))
+  
+  group2 <- rbind(group_MC,group_TS)
+  
+  env0 <- group2[order(group2$sample.id), ]
+  
+  ID0 <-read.csv("HMME.bact.OTU.ID1.csv", check.names = F, row.names = 1, header = T)
+  names(ID0)[12] <- "Phylum"
+
+  # Set node color
+  color <- c(
+    "Proteobacteria" = "#ff00ff"
+    , "Actinobacteriota" = "#00ff00"
+    , "Firmicutes" = "deepskyblue"
+    , "Planctomycetota" = "gold"
+    , "Chloroflexi" = "red"
+    , "Verrucomicrobiota" = "navy"
+    , "Crenarchaeota" = "darkgreen"
+    , "Gemmatimonadota" = "maroon3"
+    , "Nitrospirota" = "black"
+    , "Acidobacteriota" = "blue"
+    , "Methylomirabilota" = "purple"
+    , "Armatimonadota" = "chocolate"
+    , "Latescibacterota" = "turquoise"
+    , "myxococcota" = "darkred"
+    , "Thermoplasmatota" = "tan")
+  
+  test <- as.data.frame(rowSums(otu_all))
+  test$id <- rownames(test)
+  test2 <- test[order(test$`rowSums(otu_all)`,decreasing = T),]
+  otu_all <- otu_all[test2[test2$`rowSums(otu_all)` >= sum(test2$`rowSums(otu_all)`)*0.000,]$id,]
+  
+  # Subset data
+  env.tmp<-env0[env0$type==k,]
+  
+  otu_all2 <- otu_all[,colnames(otu_all) %in% env.tmp$sample.id] 
+  ID.tmp0<-ID0[ID0$OTU.ID %in% colnames(otu_all),]
+
+  otu <- t(otu_all2)[,specnumber(otu_all2) >= ncol(otu_all2)*para & colSums(t(otu_all2)) > 4]
+
+  otu2 <- otu_all2[colnames(otu),]
+  otu2$otusum <- rowSums(otu2)  
+  otu2$abu <- otu2$otusum/sum(otu2$otusum)
+  
+  spman.r0 = corr.test(otu, use="pairwise",method="spearman",adjust="fdr", alpha = .05, ci=FALSE)
+  
+  Cor<-as.matrix(spman.r0$r)  
+  Cor[lower.tri(Cor)] <- NA 
+  diag(Cor) <- NA 
+  Cor.df <- reshape2::melt(Cor, na.rm = TRUE)
+  
+  P0<-as.matrix(spman.r0$p)
+  P0[lower.tri(P0)] <- NA
+  diag(P0) <- NA
+  P.df <- reshape2::melt(P0, na.rm = TRUE)
+  
+  df <- merge(Cor.df, P.df, by=c("Var1","Var2"))
+  names(df) <- c("row","col","Cor","p")
+
+  da.tmp <- df.sig <- filter(df, abs(Cor) >= 0.6, p < 0.05)
+  
+  da.g1 <- data.frame(da.tmp)
+  #da.g1 <- na.omit(da.g1)
+
+  g <- graph_from_data_frame(da.g1, 
+                             directed=FALSE,
+                             vertices = NULL)
+  
+  fc <- cluster_fast_greedy(g)
+  print(modularity(fc))  # >0.4 indicate modular structures
+  modularity(fc,membership(fc))
+  print(sizes(fc))
+  
+  # whole network properties
+  net.metrics <- matrix(nrow=22,ncol=1)
+  net.metrics[1,1] <- length(E(g)) #length(curve_multiple(funteria.fungi.archea.g))
+  net.metrics[2,1] <- length(V(g))
+  #net.fun.metrics[3,1] <- connectedness(as.matrix(as_adjacency_matrix(igraph, type = c("both"))))
+  net.metrics[4,1] <- edge_density(g,loops=FALSE)
+  net.metrics[5,1] <- mean(igraph::degree(g))
+  net.metrics[6,1] <- average.path.length(g) 
+  net.metrics[7,1] <- diameter(g, directed = FALSE, unconnected = TRUE, weights = NA)
+  net.metrics[8,1] <- edge_connectivity(g)
+  net.metrics[9,1] <- vertex_connectivity(g)
+  net.metrics[10,1] <- cohesion(g)
+  net.metrics[11,1] <- transitivity(g)
+  net.metrics[12,1] <- no.clusters(g)
+  net.metrics[13,1] <- sum(graph.knn(g)$knn[!is.na(graph.knn(g)$knn)])/length(V(g))
+  net.metrics[14,1] <- centralization.closeness(g)$centralization
+  net.metrics[15,1] <- centralization.betweenness(g)$centralization
+  net.metrics[16,1] <- centralization.degree(g)$centralization
+  net.metrics[17,1] <- assortativity.degree(g)
+  fc <- cluster_fast_greedy(g)
+  net.metrics[18,1] <- modularity(g,membership(fc))
+  net.metrics[19,1] <- mean(igraph::betweenness(g))
+  net.metrics[20,1] <- diameter(g, directed = FALSE, unconnected = TRUE)
+  net.metrics[21,1] <- sum(E(g)$Cor>0)  # number of positive correlation
+  net.metrics[22,1] <- sum(E(g)$Cor<0)  # number of negative correlation
+  
+  rownames(net.metrics) <- c("num.edges","num.vertices","connectedness","connectance","average.degree","average.path.length","diameter",
+                             "edge_connectivity","vertex.connectivity","cohesion","clustering.coefficient","no.clusters","avenei","centralization.closeness",
+                             "centralization.betweenness","centralization.degree","assortativity.degree","modularity","average.betweenness","w.diameter","no.positive","no.negative")
+  colnames(net.metrics) <- k
+  #write.csv(net.bac.metrics,"16S.AU50.all.net.metricsHEL.csv")
+  print(net.metrics)
+  
+  net.metrics <- as.data.frame(net.metrics)
+  #net.metrics$name <- rownames(net.metrics)
+  net.metrics1 <<- net.metrics
+  
+  # set vertices size
+  v.size <- otu2[V(g)$name, ] 
+  v.size1 = log(v.size$abu * 100000)
+  V(g)$size =  abs(v.size1)
+
+  E.color <-  E(g)$Cor
+  E.color = ifelse(E.color > 0, "red",ifelse(E.color < 0, "blue", "grey"))
+  E(g)$color = as.character(E.color) 
+  
+  # color by Vertices/node with Phylum
+  V(g)$Phylum <- ID0$Phylum[match(V(g)$name, ID0$OTU.ID)]
+  #V(g)$color <- ID0$color[match(V(g)$name, ID0$OTU.ID)]
+
+  E(g)$width = abs(E(g)$Cor)
+
+  # title=paste("AMF",k,sep="-")
+  name <- c("MC" = "Farmland", "TS" = "Wildland")
+  
+  set.seed(123)
+  p1 <<-  ggraph(g, layout = "nicely") + 
+          geom_edge_bend(aes(width = abs(E(g)$Cor), color = E(g)$color), strength = 0.2) +
+          scale_edge_colour_manual(values= c("blue"="blue", "red"="red")) +
+          scale_edge_width_continuous(range = c(0.5, 1.2)) + 
+          geom_node_point(aes(color=factor(V(g)$Phylum), size = V(g)$size)) +
+          scale_colour_manual(name="Phylum",values=color) +
+          scale_size_continuous(range = c(1,5)) +
+          #geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
+          labs(title=sprintf("Bacteria-%s",name[k]),
+               subtitle =  sprintf("Vertice = %d; Edge = %d; Average degree = %g", 
+                                   net.metrics["num.vertices", ], 
+                                   net.metrics["num.edges", ], 
+                                   round(net.metrics["average.degree", ], 2))) +
+          guides(edge_colour="none", edge_width="none", size = "none") +
+          theme_void() +
+          theme(
+            plot.margin = unit(c(0.5, 0.5, 0.5, 0.5), "cm"), 
+            plot.title = element_text(size = 20, face = "bold",hjust=0.5, margin = margin(b = 10)),
+            plot.subtitle = element_text(size = 12, face = "bold",hjust=0.5, color="red", margin = margin(b = 10)), 
+            legend.title = element_text(colour = "black", size = 15,face = "bold"),
+            legend.text = element_text(colour = "black", size = 12,face = "bold"))
+  p1
+}
+
+bacteria.network("MC",0.2)
+net.metrics <- net.metrics1
+p_bac_mc <- p1
+bacteria.network("TS",0.2)
+net.metrics$TS <- net.metrics1$TS
+p_bac_ts <- p1
+
+
+property("Bacteria",170)
+p_bac_prop <- p2
+
+### 4. Fungal
+
+rm(list=setdiff(ls(), c("property",
+                        "p_amf_mc", "p_amf_ts", "p_amf_prop", 
+                        "p_bac_mc", "p_bac_ts", "p_bac_prop")))
+
+fungi.network<-function(k,para){
+  
+  setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Fungi/otu/")
+  
+  otu_all <-read.csv("otu_fungiFlattening.csv", row.names = 1, check.names = F, header = T)
+  group <- read.csv("sample_metadata.csv", header = T)
+  #group <- na.omit(group)
+  
+  group_MC <- group %>%
+    filter(country == "Uzbekistan",plants=="Maize"|plants=="Cotton")
+  group_MC$type <- rep("MC",nrow(group_MC))
+  
+  group_TS <- group %>%
+    filter(country == "Uzbekistan",plants=="Tamarix chinensis"|plants=="Suaeda")
+  group_TS$type <- rep("TS",nrow(group_TS))
+  
+  group2 <- rbind(group_MC,group_TS)
+  
+  env0 <- group2[order(group2$sample.id), ]
+  
+  ID0 <-read.csv("HMME.fung.OTU.ID1.csv", check.names = F, row.names = 1, header = T)
+  names(ID0)[12] <- "Phylum"
+  ID0$Phylum <- substr(ID0$Phylum, 4, nchar(ID0$Phylum))
+  
+  # Set node color
+  color <- c(
+    "Ascomycota" = "#ff00ff"
+    , "Basidiomycota" = "#00ff00"
+    , "Mortierellomycota" = "deepskyblue"
+    , "Glomeromycota" = "gold"
+    , "Chytridiomycota" = "red"
+    , "Mucoromycota" = "navy"
+    , "Kickxellomycota" = "darkgreen"
+    , "Fungi_phy_Incertae_sedis" = "maroon3"
+    , "Monoblepharomycota" = "black"
+    , "Rozellomycota" = "turquoise"
+    , "Aphelidiomycota" = "tan"
+    , "Zoopagomycota" = "blue"
+    , "_" = "purple")
+  
+  test <- as.data.frame(rowSums(otu_all))
+  test$id <- rownames(test)
+  test2 <- test[order(test$`rowSums(otu_all)`,decreasing = T),]
+  otu_all <- otu_all[test2[test2$`rowSums(otu_all)` >= sum(test2$`rowSums(otu_all)`)*0.000,]$id,]
+  
+  # Subset data
+  env.tmp<-env0[env0$type==k,]
+  
+  otu_all2 <- otu_all[,colnames(otu_all) %in% env.tmp$sample.id]
+  ID.tmp0<-ID0[ID0$OTU.ID %in% colnames(otu_all),]
+  
+  otu <- t(otu_all2)[,specnumber(otu_all2) >= ncol(otu_all2)*para & colSums(t(otu_all2)) > 4]
+  
+  otu2 <- otu_all2[colnames(otu),]
+  otu2$otusum <- rowSums(otu2)  
+  otu2$abu <- otu2$otusum/sum(otu2$otusum)
+
+  spman.r0 = corr.test(otu, use="pairwise",method="spearman",adjust="fdr", alpha = .05, ci=FALSE)
+  
+  Cor<-as.matrix(spman.r0$r)  
+  Cor[lower.tri(Cor)] <- NA
+  diag(Cor) <- NA
+  Cor.df <- reshape2::melt(Cor, na.rm = TRUE) 
+  
+  P0<-as.matrix(spman.r0$p)
+  P0[lower.tri(P0)] <- NA
+  diag(P0) <- NA
+  P.df <- reshape2::melt(P0, na.rm = TRUE)
+  
+  df <- merge(Cor.df, P.df, by=c("Var1","Var2"))
+  names(df) <- c("row","col","Cor","p")
+  
+  da.tmp <- df.sig <- filter(df, abs(Cor) >= 0.6, p < 0.05)
+  
+  da.g1 <- data.frame(da.tmp)
+  #da.g1 <- na.omit(da.g1)
+
+  g <- graph_from_data_frame(da.g1, 
+                             directed=FALSE,
+                             vertices = NULL)
+  
+  fc <- cluster_fast_greedy(g) 
+  print(modularity(fc))  # >0.4 indicate modular structures
+  modularity(fc,membership(fc))
+  print(sizes(fc))
+  
+  # whole network properties
+  net.metrics <- matrix(nrow=22,ncol=1)
+  net.metrics[1,1] <- length(E(g))##length(curve_multiple(funteria.fungi.archea.g))
+  net.metrics[2,1] <- length(V(g))
+  #net.fun.metrics[3,1] <- connectedness(as.matrix(as_adjacency_matrix(igraph, type = c("both"))))
+  net.metrics[4,1] <- edge_density(g,loops=FALSE)
+  net.metrics[5,1] <- mean(igraph::degree(g))
+  net.metrics[6,1] <- average.path.length(g) 
+  net.metrics[7,1] <- diameter(g, directed = FALSE, unconnected = TRUE, weights = NA)
+  net.metrics[8,1] <- edge_connectivity(g)
+  net.metrics[9,1] <- vertex_connectivity(g)
+  net.metrics[10,1] <- cohesion(g)
+  net.metrics[11,1] <- transitivity(g)
+  net.metrics[12,1] <- no.clusters(g)
+  net.metrics[13,1] <- sum(graph.knn(g)$knn[!is.na(graph.knn(g)$knn)])/length(V(g))
+  net.metrics[14,1] <- centralization.closeness(g)$centralization
+  net.metrics[15,1] <- centralization.betweenness(g)$centralization
+  net.metrics[16,1] <- centralization.degree(g)$centralization
+  net.metrics[17,1] <- assortativity.degree(g)
+  fc <- cluster_fast_greedy(g)
+  net.metrics[18,1] <- modularity(g,membership(fc))
+  net.metrics[19,1] <- mean(igraph::betweenness(g))
+  net.metrics[20,1] <- diameter(g, directed = FALSE, unconnected = TRUE)
+  net.metrics[21,1] <- sum(E(g)$Cor>0)  # number of positive correlation
+  net.metrics[22,1] <- sum(E(g)$Cor<0)  # number of negative correlation
+  
+  rownames(net.metrics) <- c("num.edges","num.vertices","connectedness","connectance","average.degree","average.path.length","diameter",
+                             "edge_connectivity","vertex.connectivity","cohesion","clustering.coefficient","no.clusters","avenei","centralization.closeness",
+                             "centralization.betweenness","centralization.degree","assortativity.degree","modularity","average.betweenness","w.diameter","no.positive","no.negative")
+  colnames(net.metrics) <- k
+  #write.csv(net.bac.metrics,"16S.AU50.all.net.metricsHEL.csv")
+  print(net.metrics)
+  
+  net.metrics <- as.data.frame(net.metrics)
+  #net.metrics$name <- rownames(net.metrics)
+  net.metrics1 <<- net.metrics
+  
+  # set vertices size
+  v.size <- otu2[V(g)$name, ] 
+  v.size1 = log(v.size$abu * 100000) 
+  V(g)$size =  abs(v.size1)
+
+  E.color <-  E(g)$Cor
+  E.color = ifelse(E.color > 0, "red",ifelse(E.color < 0, "blue", "grey"))
+  E(g)$color = as.character(E.color) 
+  
+  # color by Vertices/node with Phylum
+  V(g)$Phylum <- ID0$Phylum[match(V(g)$name, ID0$OTU.ID)]
+  #V(g)$color <- ID0$color[match(V(g)$name, ID0$OTU.ID)]
+  
+  E(g)$width = abs(E(g)$Cor)
+  
+  # title=paste("AMF",k,sep="-")
+  name <- c("MC" = "Farmland", "TS" = "Wildland")
+
+  set.seed(123)
+  p1 <<-  ggraph(g, layout = "nicely") + 
+          geom_edge_bend(aes(width = abs(E(g)$Cor), color = E(g)$color), strength = 0.2) + 
+          scale_edge_colour_manual(values= c("blue"="blue", "red"="red")) +
+          scale_edge_width_continuous(range = c(0.5, 1.2)) +
+          geom_node_point(aes(color=factor(V(g)$Phylum), size = V(g)$size)) +
+          scale_colour_manual(name="Phylum",values=color) +
+          scale_size_continuous(range = c(1,5)) +
+          #geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
+          labs(title=sprintf("Fungi-%s",name[k]),
+               subtitle =  sprintf("Vertice = %d; Edge = %d; Average degree = %g", 
+                                   net.metrics["num.vertices", ], 
+                                   net.metrics["num.edges", ], 
+                                   round(net.metrics["average.degree", ], 2))) +
+          guides(edge_colour="none", edge_width="none", size = "none") +
+          theme_void() +
+          theme(
+            plot.margin = unit(c(0.5, 0.5, 0.5, 0.5), "cm"), 
+            plot.title = element_text(size = 20, face = "bold",hjust=0.5, margin = margin(b = 10)),
+            plot.subtitle = element_text(size = 12, face = "bold",hjust=0.5, color="red", margin = margin(b = 10)), 
+            legend.title = element_text(colour = "black", size = 15,face = "bold"),
+            legend.text = element_text(colour = "black", size = 12,face = "bold"))
+  p1
+}
+
+fungi.network("MC",0.2)
+net.metrics <- net.metrics1
+p_fung_mc <- p1
+fungi.network("TS",0.2)
+net.metrics$TS <- net.metrics1$TS
+p_fung_ts <- p1
+
+
+property("Fungi",5200)
+p_fung_prop <- p2
+
+
+### 4. Protist
+
+rm(list=setdiff(ls(), c("property",
+                        "p_amf_mc", "p_amf_ts", "p_amf_prop", 
+                        "p_bac_mc", "p_bac_ts", "p_bac_prop",
+                        "p_fung_mc", "p_fung_ts", "p_fung_prop")))
+
+protist.network<-function(k,para){
+  
+  setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Protist/otu/")
+  
+  otu_all <-read.csv("otu_protistFlattening.csv", row.names = 1, check.names = F, header = T)
+  group <- read.csv("sample_metadata.csv", header = T)
+  #group <- na.omit(group)
+  
+  group_MC <- group %>%
+    filter(country == "Uzbekistan",plants=="Maize"|plants=="Cotton")
+  group_MC$type <- rep("MC",nrow(group_MC))
+  
+  group_TS <- group %>%
+    filter(country == "Uzbekistan",plants=="Tamarix chinensis"|plants=="Suaeda")
+  group_TS$type <- rep("TS",nrow(group_TS))
+  
+  group2 <- rbind(group_MC,group_TS)
+  
+  env0 <- group2[order(group2$sample.id), ]
+  
+  ID0 <-read.csv("HMME.prot.OTU.ID1.csv", check.names = F, row.names = 1, header = T)
+  names(ID0)[13] <- "Phylum"
+  ID0$Phylum <- substr(ID0$Phylum, 3, nchar(ID0$Phylum))
+  
+  # Set node color
+  color <- c(
+    "Alveolata-Ciliophora" = "#ff00ff"
+    , "Alveolata-Apicomplexa" = "chocolate"
+    , "Centroplasthelida-Centroplasthelida_X" = "turquoise"
+    , "Chlorophyta-Chlorophyta_X" = "#00ff00"
+    , "Cryptophyta-Cryptophyta_X" = "darkred"
+    , "Evosea-Evosea_X" = "deepskyblue"
+    , "Glaucophyta-Glaucophyta_X" = "salmon"
+    , "Opisthokonta-Choanoflagellata" = "tan"
+    , "Opisthokonta-Opisthokonta X" = "purple"
+    , "Picozoa-Picozoa_X" = "peru"
+    , "Streptophyta-Streptophyta_X" = "blue"
+    , "Rhizaria-Cercozoa" = "gold"
+    , "Stramenopiles-Bigyra" = "red"
+    , "Tubulinea-Tubulinea_X" = "navy"
+    , "Stramenopiles-Gyrista" = "darkgreen"
+    , "Discoba-Discoba_X" = "maroon3"
+    , "Ancyromonadida-Ancyromonadida_X" = "black"
+    , "Rhodelphidia-Rhodelphidia_X" = "bisque")
+  
+  test <- as.data.frame(rowSums(otu_all))
+  test$id <- rownames(test)
+  test2 <- test[order(test$`rowSums(otu_all)`,decreasing = T),]
+  otu_all <- otu_all[test2[test2$`rowSums(otu_all)` >= sum(test2$`rowSums(otu_all)`)*0.000,]$id,]
+  
+  
+  #Subset data
+  env.tmp<-env0[env0$type==k,]
+  
+  otu_all2 <- otu_all[,colnames(otu_all) %in% env.tmp$sample.id]  
+  ID.tmp0<-ID0[ID0$OTU.ID %in% colnames(otu_all),] 
+  
+  otu <- t(otu_all2)[,specnumber(otu_all2) >= ncol(otu_all2)*para & colSums(t(otu_all2)) > 4]
+  
+  otu2 <- otu_all2[colnames(otu),]
+  otu2$otusum <- rowSums(otu2)  
+  otu2$abu <- otu2$otusum/sum(otu2$otusum)
+  
+  spman.r0 = corr.test(otu, use="pairwise",method="spearman",adjust="fdr", alpha = .05, ci=FALSE)
+  
+  Cor<-as.matrix(spman.r0$r)  
+  Cor[lower.tri(Cor)] <- NA 
+  diag(Cor) <- NA 
+  Cor.df <- reshape2::melt(Cor, na.rm = TRUE) 
+  
+  P0<-as.matrix(spman.r0$p)
+  P0[lower.tri(P0)] <- NA 
+  diag(P0) <- NA 
+  P.df <- reshape2::melt(P0, na.rm = TRUE) 
+  
+  df <- merge(Cor.df, P.df, by=c("Var1","Var2"))
+  names(df) <- c("row","col","Cor","p")
+  
+  da.tmp <- df.sig <- filter(df, abs(Cor) >= 0.6, p < 0.05)
+  
+  da.g1 <- data.frame(da.tmp)
+  #da.g1 <- na.omit(da.g1)
+
+  g <- graph_from_data_frame(da.g1, 
+                             directed=FALSE,  
+                             vertices = NULL) 
+
+  fc <- cluster_fast_greedy(g) 
+  print(modularity(fc))  # >0.4 indicate modular structures
+  modularity(fc,membership(fc))
+  print(sizes(fc))
+  
+  # whole network properties
+  net.metrics <- matrix(nrow=22,ncol=1)
+  net.metrics[1,1] <- length(E(g))##length(curve_multiple(funteria.fungi.archea.g))
+  net.metrics[2,1] <- length(V(g))
+  #net.fun.metrics[3,1] <- connectedness(as.matrix(as_adjacency_matrix(igraph, type = c("both"))))
+  net.metrics[4,1] <- edge_density(g,loops=FALSE)
+  net.metrics[5,1] <- mean(igraph::degree(g))
+  net.metrics[6,1] <- average.path.length(g) 
+  net.metrics[7,1] <- diameter(g, directed = FALSE, unconnected = TRUE, weights = NA)
+  net.metrics[8,1] <- edge_connectivity(g)
+  net.metrics[9,1] <- vertex_connectivity(g)
+  net.metrics[10,1] <- cohesion(g)
+  net.metrics[11,1] <- transitivity(g)
+  net.metrics[12,1] <- no.clusters(g)
+  net.metrics[13,1] <- sum(graph.knn(g)$knn[!is.na(graph.knn(g)$knn)])/length(V(g))
+  net.metrics[14,1] <- centralization.closeness(g)$centralization
+  net.metrics[15,1] <- centralization.betweenness(g)$centralization
+  net.metrics[16,1] <- centralization.degree(g)$centralization
+  net.metrics[17,1] <- assortativity.degree(g)
+  fc <- cluster_fast_greedy(g)
+  net.metrics[18,1] <- modularity(g,membership(fc))
+  net.metrics[19,1] <- mean(igraph::betweenness(g))
+  net.metrics[20,1] <- diameter(g, directed = FALSE, unconnected = TRUE)
+  net.metrics[21,1] <- sum(E(g)$Cor>0)  # number of positive correlation
+  net.metrics[22,1] <- sum(E(g)$Cor<0)  # number of negative correlation
+  
+  rownames(net.metrics) <- c("num.edges","num.vertices","connectedness","connectance","average.degree","average.path.length","diameter",
+                             "edge_connectivity","vertex.connectivity","cohesion","clustering.coefficient","no.clusters","avenei","centralization.closeness",
+                             "centralization.betweenness","centralization.degree","assortativity.degree","modularity","average.betweenness","w.diameter","no.positive","no.negative")
+  colnames(net.metrics) <- k
+  #write.csv(net.bac.metrics,"16S.AU50.all.net.metricsHEL.csv")
+  print(net.metrics)
+  
+  net.metrics <- as.data.frame(net.metrics)
+  #net.metrics$name <- rownames(net.metrics)
+  net.metrics1 <<- net.metrics
+  
+  # set vertices size
+  v.size <- otu2[V(g)$name, ] 
+  v.size1 = log(v.size$abu * 100000)  
+  V(g)$size =  abs(v.size1)
+  
+  E.color <-  E(g)$Cor
+  E.color = ifelse(E.color > 0, "red",ifelse(E.color < 0, "blue", "grey"))
+  E(g)$color = as.character(E.color) 
+  
+  # color by Vertices/node with Phylum
+  V(g)$Phylum <- ID0$Phylum[match(V(g)$name, ID0$OTU.ID)] 
+  #V(g)$color <- ID0$color[match(V(g)$name, ID0$OTU.ID)]
+  
+  E(g)$width = abs(E(g)$Cor)
+  
+  # title=paste("AMF",k,sep="-")
+  name <- c("MC" = "Farmland", "TS" = "Wildland")
+  
+  set.seed(123)
+  p1 <<-  ggraph(g, layout = "nicely") + 
+          geom_edge_bend(aes(width = abs(E(g)$Cor), color = E(g)$color),  strength = 0.2) +
+          scale_edge_colour_manual(values= c("blue"="blue", "red"="red")) +
+          scale_edge_width_continuous(range = c(0.5, 1.2)) +
+          geom_node_point(aes(color=factor(V(g)$Phylum), size = V(g)$size)) +
+          scale_colour_manual(name="Phylum",values=color) +
+          scale_size_continuous(range = c(1,5)) +
+          #geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
+          labs(title=sprintf("Protists-%s",name[k]),
+               subtitle =  sprintf("Vertice = %d; Edge = %d; Average degree = %g", net.metrics["num.vertices",], net.metrics["num.edges",], round(net.metrics["average.degree",],2))) +
+          guides(edge_colour="none", edge_width="none", size = "none") +
+          theme_void() +
+          theme(
+            plot.margin = unit(c(0.5, 0.5, 0.5, 0.5), "cm"), 
+            plot.title = element_text(size = 20, face = "bold",hjust=0.5, margin = margin(b = 10)),
+            plot.subtitle = element_text(size = 12, face = "bold",hjust=0.5, color="red", margin = margin(b = 10)), 
+            legend.title = element_text(colour = "black", size = 15,face = "bold"),
+            legend.text = element_text(colour = "black", size = 12,face = "bold"))
+  p1
+}
+
+
+protist.network("MC",0.2)
+net.metrics <- net.metrics1
+p_prot_mc <- p1
+protist.network("TS",0.2)
+net.metrics$TS <- net.metrics1$TS
+p_prot_ts <- p1
+
+
+property("Protists",130)
+p_prot_prop <- p2
+
+#save.image("E:/HMME/Maize-drought-iteration/4-data analysis/amplicon(zhh)/Result/Protist/otu2/network/Protist-Network-Property.RData")
+
+# saveRDS(p_amf_mc,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/network/network_Shannon_amf_mc.rda")
+# saveRDS(p_amf_ts,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/network/network_Shannon_amf_ts.rda")
+# saveRDS(p_amf_prop,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/network/network_Shannon_amf_prop.rda")
+# saveRDS(p_bac_mc,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/network/network_Shannon_bac_mc.rda")
+# saveRDS(p_bac_ts,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/network/network_Shannon_bac_ts.rda")
+# saveRDS(p_bac_prop,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/network/network_Shannon_bac_prop.rda")
+# saveRDS(p_fung_mc,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/network/network_Shannon_fung_mc.rda")
+# saveRDS(p_fung_ts,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/network/network_Shannon_fung_ts.rda")
+# saveRDS(p_fung_prop,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/network/network_Shannon_fung_prop.rda")
+# saveRDS(p_prot_mc,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/network/network_Shannon_prot_mc.rda")
+# saveRDS(p_prot_ts,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/network/network_Shannon_prot_ts.rda")
+# saveRDS(p_prot_prop,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/network/network_Shannon_prot_prop.rda")
+
+```{r,fig.align='center', fig.height=10.5, fig.width=20}
+
+p_all <- (p_amf_mc + p_amf_ts + p_amf_prop + 
+          p_bac_mc + p_bac_ts + p_bac_prop) +
+  plot_annotation(tag_levels = 'a') &
+  theme(plot.tag = element_text(size = 20, face = "bold"))
+
+p_all
+
+```{r,fig.align='center', fig.height=10.5, fig.width=22}
+
+p_all2 <- (p_fung_mc + p_fung_ts + p_fung_prop + 
+           p_prot_mc + p_prot_ts + p_prot_prop) +
+  plot_annotation(tag_levels = 'a') &
+  theme(plot.tag = element_text(size = 20, face = "bold"))
+
+p_all2
+
+
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/network/Network.svg", p_all, height = 10.5, width = 20)
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/network/Network.pdf", p_all, height = 10.5, width = 20)
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/network/Network.png", p_all, height = 10.5, width = 20)
+# 
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/network/Network2.svg", p_all2, height = 10.5, width = 20)
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/network/Network2.pdf", p_all2, height = 10.5, width = 20)
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/network/Network2.png", p_all2, height = 10.5, width = 20)
+
+```
+

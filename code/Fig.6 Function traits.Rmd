@@ -1,0 +1,511 @@
+---
+title: "Fig.6 Function traits"
+author: "Huanhuan Zhu"
+date: "2024-09-25"
+output: html_document
+---
+
+```{r,fig.align='center', fig.height=8, fig.width=10}
+#############################Fig.6 Function traits##########################
+
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(agricolae)
+library(splitstackshape)
+library(patchwork)
+library(tibble)
+library(psych)
+library(reshape2)
+library(ggpubr)
+library(linkET)
+library(agricolae) # kruskal for nonparametric test
+library(ggh4x)  # set individual y axis for facet
+
+rm(list=ls())
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Bacteria/otu/gtdb")
+
+# read rarefied otu table
+otu_table <- otu_table <- read.csv("../otu_bacteriaFlattening.csv")
+otu_table1 <- otu_table %>% separate(X, into = c("First", "Second"), "[.]")
+
+# read result blast
+blast <- read.table("blast.uotus.bacteria.gtdb.txt",comment.char = "")  # comment.char = "" 琛ㄧず涓嶅皢#鐪嬩綔娉ㄩ噴瀛楃鑰屽拷鐣ュ悗闈㈢殑鍐呭
+blast <- blast[!duplicated(blast$V1),]  # 鍒犻櫎閲嶅鐨刼tu
+
+# read metadata of GTDB
+metadata_bac <- read.delim("bac120_metadata_r214.tsv",sep = "\t",header = T)
+metadata_arc <- read.delim("ar53_metadata_r214.tsv",sep = "\t",header = T)
+metadata <- rbind(metadata_bac,metadata_arc)
+
+# filter the results according to otu table
+blast1 <- blast[blast[,1] %in% otu_table1[,1],]
+
+blast1 <- blast1 %>% separate(V5, into = c("First", "Second"), "~")
+blast1 <- blast1[!duplicated(blast1$V1),]  # delete duolicate OTUs
+
+# merge results of blast and GTDB metadata
+blast2 <- merge(blast1,metadata,by.x = "First",by.y="accession")
+otu_table2 <- merge(otu_table1,blast2,by.x = "First",by.y = "V1")
+
+
+### 1. calculate avergae genome size 
+my_gs <- function(name){
+  
+  otu_table3 <- otu_table2
+  otu_table3[,3:27] <- apply(otu_table3[,3:27],2,function(x) x/sum(x))  # percentage by column
+  colSums(otu_table3[,3:27])  # check if the sum of each column is equal to 1
+  
+  # average genome size
+  for(i in 3:27){  
+    otu_table3[,i] <- otu_table3[,i]*otu_table3[,name]
+  }
+  
+  genomesize_ave <- as.data.frame(colSums(otu_table3[,3:27]))
+
+  genomesize_ave3 <- genomesize_ave
+  genomesize_ave3$sample.id <- rownames(genomesize_ave3)
+  names(genomesize_ave3)[1] <- "genome_size"
+  genomesize_ave3 <<- genomesize_ave3
+}
+
+### 2. calculate avergae gc content
+my_gc <- function(name){
+  
+  otu_table3 <- otu_table2
+  otu_table3[,3:27] <- apply(otu_table3[,3:27],2,function(x) x/sum(x))  # percentage by column
+  colSums(otu_table3[,3:27])  # check if the sum of each column is equal to 1
+  
+  # gc content
+  for(i in 3:27){ 
+    otu_table3[,i] <- otu_table3[,i]*otu_table3[,name]
+  }
+  
+  gc_ave <- as.data.frame(colSums(otu_table3[,3:27]))
+  
+  gc_ave3 <- gc_ave
+  gc_ave3$sample.id <- rownames(gc_ave3)
+  
+  names(gc_ave3)[1] <- "gc_content"
+  gc_ave3 <<- gc_ave3
+}
+
+my_gs("genome_size")
+my_gc("gc_percentage")
+
+
+### 3. rRNA copy number from rrndb
+
+#rm(list = setdiff(ls(), c("p1", "p2")))
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Bacteria/otu/rrndb/")
+
+blast_rrna <- read.delim("blast.uotus.bacteria.rrndb.all.txt", check.names = F,header = F)
+blast_rrna <- blast_rrna[!duplicated(blast_rrna$V1),]
+
+blast_rrna1 <-
+  concat.split(
+    data = blast_rrna,
+    split.col = "V7",
+    sep = "[|]",
+    drop = TRUE
+  )  # use ‰/|‰ for 鈥渱‰
+
+rrndb <- read.delim("rrnDB-5.8.tsv", check.names = F)
+names(rrndb)[1] <- "id"
+names(rrndb)[12] <- "16S"
+blast_rrna2 <- merge(blast_rrna1[, c("V1","V7_2")], rrndb[, c("id","16S")] ,by.x="V7_2", by.y="id")
+
+otu_all0 <- read.csv("../otu_bacteriaFlattening.csv", row.names = 1)
+otu_all0 <- as.data.frame(apply(otu_all0,2, function(x) x/sum(x)))
+colSums(otu_all0)
+
+otu_all0$id <- rownames(otu_all0)
+
+otu_all1 <-
+  concat.split(
+    data = otu_all0,
+    split.col = "id",
+    sep = "\\.",
+    drop = TRUE
+  )
+
+otu_all1 <- otu_all1[,1:26]
+
+otu_all2 <- as.data.frame(merge(otu_all1,blast_rrna2, by.x="id_1", by.y="V1", all.x = TRUE))
+
+
+for(i in 2:26){ 
+  otu_all2[,i] <- otu_all2[,i] * otu_all2[,"16S"]
+}
+otu_all2 <- na.omit(otu_all2)
+
+rrna_ave <- as.data.frame(colSums(otu_all2[,2:26]))
+rrna_ave3 <- rrna_ave
+rrna_ave3$sample.id <- rownames(rrna_ave3)
+names(rrna_ave3)[1] <- "rrna"
+
+
+group <- read.csv("sample_metadata.csv")
+group <- na.omit(group)
+group$cnratio <- group$tc/group$tn
+group$npration <- group$tn/group$tp
+group$cpration <- group$tc/group$tp
+group$napration <- group$tn/group$avail_p*1000
+group$capration <- group$tc/group$avail_p*1000
+
+
+df_list <- list(genomesize_ave3, gc_ave3, rrna_ave3)
+df_list2 <- list(genomesize_ave3, gc_ave3, rrna_ave3,group[,c(1,8:18)])
+
+# use Reduce() to megge multiple dataframe one time
+traits <- Reduce(function(x, y) merge(x, y, by = "sample.id"), df_list)
+traits <- column_to_rownames(traits,"sample.id")
+group2 <- group[,c(1,9:19)]
+group2 <- column_to_rownames(group2,"sample.id")
+
+traits <- traits[rownames(group2),]
+
+traits2 <- Reduce(function(x, y) merge(x, y, by = "sample.id"), df_list2)
+traits2 <- column_to_rownames(traits2,"sample.id")
+
+corr_matrix <- corr.test(traits,group2, method = 'spearman', adjust = 'BH')  # 鏈ず渚嬩娇鐢? Benjamini 鏍℃ p 鍊?
+corr_matrix$r
+corr_matrix$p
+
+p1_cor <- qcorrplot(corr_matrix) +
+      geom_square() +
+      geom_mark(sep = '\n',sig_thres = 0.05, size = 3, color = "white") +
+      scale_fill_gradientn(colours = RColorBrewer::brewer.pal(11, "RdBu")) +
+      scale_x_discrete(labels = c(
+                                  pH = "pH", 
+                                  salt_content = "Salt_content (‰)", 
+                                  tc = "TC (%)", 
+                                  tn = "TN (%)", 
+                                  tp = "TP (%)", 
+                                  avail_p = "Avail_P (mg/kg)",
+                                  cnratio = "TC:TN",
+                                  npration = "TN:TP",
+                                  cpration = "TC:TP",
+                                  napration = "TN:Avail_P",
+                                  capration = "TC:Avail_P"), 
+                       limit = c("pH","salt_content","tc","tn","tp","avail_p","cnratio","npration","cpration","napration","capration"), 
+                       position = "top") +
+      scale_y_discrete(labels = c(
+        genome_size = "Genome size", 
+        gc_content = "GC content",
+        rrna = "rRNA copy number "
+        ), limit = c("gc_content","rrna","genome_size")) +
+      labs(title = "") +
+      guides(fill = guide_colorbar(title = "Spearman's Rho")) +
+      theme(plot.margin = margin(0,0,0,0, unit = "cm"), 
+            #plot.title = element_text(size=20,face = "bold", hjust = 0.5),
+            plot.title = element_blank(),
+            axis.title.y = element_blank(), 
+            axis.text = element_text(size = 12,face = "bold"),
+            legend.title = element_text(size = 15,face = "bold"),
+            legend.text = element_text(size = 12,face = "bold"))
+
+p1_cor
+
+p2_cor <- qcorrplot(correlate(traits2,method = "spearman"), type = "upper", diag = FALSE) +
+      geom_square() +
+      geom_mark(sep = '\n',sig_thres = 0.05, size = 3.5, color = "white") +
+      scale_fill_gradientn(colours = RColorBrewer::brewer.pal(11, "RdBu")) +
+      labs(title = "title") +
+      guides(fill = guide_colorbar(title = "Spearman's Rho")) +
+      theme(plot.title = element_text(size=20,face = "bold", hjust = 0.5),
+            axis.text = element_text(size = 12,face = "bold"),
+            legend.title = element_text(size = 15,face = "bold"),
+            legend.text = element_text(size = 12,face = "bold"))
+
+p2_cor
+
+
+traits$id <- substr(rownames(traits), 1, 2)
+
+ST <- with(traits,kruskal(genome_size, id, p.adj = "fdr"))
+
+# extract chi square value and p value of nonparametric test
+statis <- as.data.frame(rbind(ST$statistics[,1:2]))
+
+# label significance
+statis$sig <- 0
+statis[statis$p.chisq < 0.001,]$sig  = rep(" < 0.001",nrow(statis[statis$p.chisq < 0.001,]))
+statis[statis$p.chisq > 0.001,]$sig  = paste0(" = ",round(statis[statis$p.chisq > 0.001,]$p.chisq,3))
+
+# create datafarme for geom_text
+rp.value <- data.frame(
+  label=sprintf("P = %.3e (χ² = %.3g)", 
+                statis$p.chisq,statis$Chisq),
+  x="CL",
+  y=5.9)
+
+# extract letter of Post Hoc Tests
+statis1 <- as.data.frame(rbind(ST$groups))
+# extract mean of nonparametric test
+statis2 <- as.data.frame(rbind(ST$means))
+
+# get ymax for letter of Post Hoc test
+p1 <- ggplot(data = traits,aes(y=genome_size,x=factor(id))) +
+  stat_boxplot(geom = "errorbar",
+               width=0.3)
+ymaxdata <- layer_data(p1) 
+statis2$ymax <- ymaxdata$ymax
+
+# merge tables
+statis1$id <- rownames(statis1)
+statis2$id <- rownames(statis2)
+statis2 <- merge(statis2,statis1,by="id")
+
+# dataframe for geom_text
+multcomp.data <- data.frame(
+  abc=factor(statis2$groups),
+  x     = statis2$id,
+  y     = as.numeric(statis2$ymax/1000000)
+)
+
+p_gs <- ggplot(data = traits,aes(y=genome_size/1000000,x=factor(id, levels = c("CK","JP","CL","MH","YM"))))+
+        stat_boxplot(geom = "errorbar",
+                     width=0.3)+
+        #  ymaxdata <- layer_data(p)
+        geom_boxplot(width=0.5)+
+        #  geom_jitter(size=0.8)+
+        scale_x_discrete(labels=c(
+          "CK" = "Bareland",
+          "JP" = "Suaeda",
+          "CL" = "Tamarix",
+          "MH" = "Cotton",
+          "YM" = "Maize"
+        )) +
+        labs(x="", y="Mb", title = "Average genome size")+
+        geom_text(
+          data    = rp.value, mapping = aes(x = x, y = y, label = label),parse = F,  col="red", hjust=0.5,size=5)+ 
+        geom_text(data=multcomp.data,aes(x=x,y=y+0.1,label=abc),
+                  color="black",
+                  size = 6, hjust=0.5)+
+        theme_bw()+
+        ylim(5,6)+
+        theme(panel.grid=element_blank(), 
+              axis.ticks.y=element_line(color="black",linewidth=0.5))+
+        theme(plot.title = element_text(hjust = 0.5,size=20,face = "bold"),
+              axis.title=element_text(size=16,face="bold"),
+              axis.title.x = element_blank(),
+              axis.text=element_text(size=12,face="bold",color = "black"))
+p_gs
+
+
+
+ST <- with(traits,kruskal(gc_content, id, p.adj = "fdr"))
+
+# extract results of nonparametric
+statis <- as.data.frame(rbind(ST$statistics[,1:2]))
+
+# significance
+statis$sig <- 0
+statis[statis$p.chisq < 0.001,]$sig  = rep(" < 0.001",nrow(statis[statis$p.chisq < 0.001,]))
+statis[statis$p.chisq > 0.001,]$sig  = paste0(" = ",round(statis[statis$p.chisq > 0.001,]$p.chisq,3))
+
+# create dataframe for value 
+rp.value <- data.frame(
+  label=sprintf("P = %.3e (χ² = %.3g)",  
+                statis$p.chisq,statis$Chisq),
+  x="CL",
+  y=64)
+
+# results of Post Hoc 
+statis1 <- as.data.frame(rbind(ST$groups))
+statis2 <- as.data.frame(rbind(ST$means))
+
+# get ymax
+p1 <- ggplot(data = traits,aes(y=gc_content,x=factor(id)))+ 
+  stat_boxplot(geom = "errorbar",
+               width=0.3)
+ymaxdata <- layer_data(p1) 
+statis2$ymax <- ymaxdata$ymax
+
+statis1$id <- rownames(statis1)
+statis2$id <- rownames(statis2)
+statis2 <- merge(statis2,statis1,by="id")
+
+# dataframe for geom_text
+multcomp.data <- data.frame(
+  abc=factor(statis2$groups),
+  x     = statis2$id,
+  y     = as.numeric(statis2$ymax)
+)
+
+p_gc <- ggplot(data = traits,aes(y=gc_content,x=factor(id, levels = c("CK","JP","CL","MH","YM"))))+
+  stat_boxplot(geom = "errorbar",
+               width=0.3)+
+  #  ymaxdata <- layer_data(p)
+  geom_boxplot(width=0.5)+
+  #  geom_jitter(size=0.8)+
+  scale_x_discrete(labels=c(
+    "CK" = "Bareland",
+    "JP" = "Suaeda",
+    "CL" = "Tamarix",
+    "MH" = "Cotton",
+    "YM" = "Maize"
+  )) +
+  labs(x="", y="%", title = "GC_content")+
+  geom_text(
+    data    = rp.value, mapping = aes(x = x, y = y, label = label),parse = F,  col="red", hjust=0.5,size=5)+ 
+  geom_text(data=multcomp.data,aes(x=x,y=y+0.5,label=abc),
+            color="black",
+            size = 6, hjust=0.5)+
+  theme_bw()+
+  ylim(59.5,64.5)+
+  theme(panel.grid=element_blank(), 
+        axis.ticks.y=element_line(color="black",linewidth=0.5))+
+  theme(plot.title = element_text(hjust = 0.5,size=20,face = "bold"),
+        axis.title=element_text(size=16,face="bold"),
+        axis.title.x = element_blank(),
+        axis.text=element_text(size=12,face="bold",color = "black"))
+p_gc
+
+
+
+ST <- with(traits,kruskal(rrna, id, p.adj = "fdr"))
+
+statis <- as.data.frame(rbind(ST$statistics[,1:2]))
+
+statis$sig <- 0
+statis[statis$p.chisq < 0.001,]$sig  = rep(" < 0.001",nrow(statis[statis$p.chisq < 0.001,]))
+statis[statis$p.chisq > 0.001,]$sig  = paste0(" = ",round(statis[statis$p.chisq > 0.001,]$p.chisq,3))
+
+rp.value <- data.frame(
+  label=sprintf("P = %.3e (χ² = %.3g)",  
+                statis$p.chisq,statis$Chisq),
+  x="CL",
+  y=4.7)
+
+
+statis1 <- as.data.frame(rbind(ST$groups))
+statis2 <- as.data.frame(rbind(ST$means))
+
+
+p1 <- ggplot(data = traits,aes(y=rrna,x=factor(id)))+
+  stat_boxplot(geom = "errorbar",
+               width=0.3)
+ymaxdata <- layer_data(p1) 
+statis2$ymax <- ymaxdata$ymax
+
+statis1$id <- rownames(statis1)
+statis2$id <- rownames(statis2)
+statis2 <- merge(statis2,statis1,by="id")
+
+multcomp.data <- data.frame(
+  abc=factor(statis2$groups),
+  x     = statis2$id,
+  y     = as.numeric(statis2$ymax)
+)
+
+p_rrna <- ggplot(data = traits,aes(y=rrna,x=factor(id, levels = c("CK","JP","CL","MH","YM"))))+
+  stat_boxplot(geom = "errorbar",
+               width=0.3)+
+  #  ymaxdata <- layer_data(p)
+  geom_boxplot(width=0.5)+
+  #  geom_jitter(size=0.8)+
+  scale_x_discrete(labels=c(
+    "CK" = "Bareland",
+    "JP" = "Suaeda",
+    "CL" = "Tamarix",
+    "MH" = "Cotton",
+    "YM" = "Maize"
+  )) +
+  labs(x="", y= "",title = "rDNA copy number")+
+  geom_text(
+    data    = rp.value, mapping = aes(x = x, y = y, label = label),parse = F,  col="red", hjust=0.5,size=5)+ 
+  geom_text(data=multcomp.data,aes(x=x,y=y+0.2,label=abc),
+            color="black",
+            size = 6, hjust=0.5)+
+  theme_bw()+
+  ylim(2.6,5)+
+  theme(panel.grid=element_blank(), 
+        axis.ticks.y=element_line(color="black",linewidth=0.5))+
+  theme(plot.title = element_text(hjust = 0.5,size=20,face = "bold"),
+        axis.title=element_text(size=16,face="bold"),
+        axis.title.x = element_blank(),
+        axis.text=element_text(size=12,face="bold",color = "black"))
+p_rrna
+
+
+
+# group
+traits3 <- traits[traits$id != "CK",]
+traits3[traits3$id == "JP" | traits3$id == "CL",]$id <- "Wildland"
+traits3[traits3$id == "YM" | traits3$id == "MH",]$id <- "Farmland"
+
+# t test
+test_gs <- wilcox.test(genome_size~id,traits3)
+test_gc <- wilcox.test(gc_content~id,traits3)
+test_rrna <- wilcox.test(rrna~id,traits3)
+#kruskal.test(value~new,genomesize_ave)
+
+traits4 <- melt(traits3, id="id")
+traits4[traits4$variable == "genome_size",]$value = traits4[traits4$variable == "genome_size",]$value/1000000
+traits4$variable <- factor(traits4$variable, levels=c("genome_size", "rrna", "gc_content"))
+
+
+dat_text <- data.frame(
+  label = c(label=sprintf("P = %.3e (W = %.3g)",  test_gs$p.value,  test_gs$statistic), 
+            label=sprintf("P = %.3e (W = %.3g)",  test_gc$p.value,  test_gc$statistic),
+            label=sprintf("P = %.3e (W = %.3g)",  test_rrna$p.value,  test_rrna$statistic)),
+  variable   = c("genome_size", "gc_content", "rrna"),
+  x=c(1.5,1.5,1.5),
+  y=c(5.7,62.05,4.65))
+dat_text$variable <- factor(dat_text$variable, levels = c("genome_size", "gc_content", "rrna"))
+
+# set individual ylim
+scales_y <- list(
+  `genome_size` = scale_y_continuous(limits = c(5, 5.8), breaks = seq(5, 6, 0.2)),
+  `rrna` = scale_y_continuous(limits = c(2.5, 5), breaks = seq(2.5, 5, 0.6)),
+  `gc_content` = scale_y_continuous(limits = c(59.5, 62.5), breaks = seq(59.5, 62.5, 1)))
+
+p_gsgcrrna <- ggplot(traits4,aes(x=factor(id),y=value)) +
+  #geom_errorbar() +
+  stat_boxplot(geom = "errorbar", width=0.3) +
+  geom_boxplot(width=0.5) +
+  facet_wrap(.~variable, scales = "free",
+             labeller = labeller(variable = c('genome_size' = "Genome size (Mb)",
+                                              'rrna' = "rDNA copy number",
+                                              'gc_content' = "GC content (%)"))) +
+  geom_text(data = dat_text, mapping = aes(x = x, y = y, label = label), parse = F,color ="red") +
+  facetted_pos_scales(y = scales_y) +
+  theme_bw() +
+  theme(panel.grid=element_blank(), 
+        axis.ticks.y=element_line(color="black",linewidth=0.5),
+        plot.title = element_text(hjust = 0.5,size=20,face = "bold"),
+        axis.title = element_blank(),
+        strip.text = element_text(size=12,face="bold",color = "black"),
+        axis.text=element_text(size=12,face="bold",color = "black"))
+
+
+p_gsgcrrna
+
+
+# saveRDS(p1_cor,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/traits/Correlation.rda")
+# saveRDS(p2_cor,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/traits/Correlation_all.rda")
+# saveRDS(p_gs,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/traits/Genome_size_five.rda")
+# saveRDS(p_gc,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/traits/GC_content_five.rda")
+# saveRDS(p_rrna,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/traits/rRNA_five.rda")
+# saveRDS(p_gsgcrrna,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/traits/GS_GN_rRNA_two.rda")
+
+p_all <- p1_cor / p_gsgcrrna +  plot_layout(heights = c(7, 5)) +
+          plot_annotation(tag_levels = 'a') &
+          theme(plot.tag = element_text(size = 20, face = "bold"))
+p_all
+
+```{r,fig.align='center', fig.height=6, fig.width=15}
+p_traits <- p_gs + p_gc + p_rrna
+p_traits
+
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/traits/Traits_all_two.svg", p_all, height = 7, width = 10)
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/traits/Traits_all_two.pdf", p_all, height = 7, width = 10)
+# 
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/traits/Traits_five.svg", p_traits, height = 4.5, width = 14)
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/traits/Traits_five.pdf", p_traits, height = 4.5, width = 14)
+
+
+```
+

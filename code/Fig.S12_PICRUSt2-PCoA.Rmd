@@ -1,0 +1,127 @@
+---
+title: "Fig.S12_PICRUSt2-PCoA"
+author: "Huanhuan Zhu"
+date: "2024-09-25"
+output: html_document
+---
+
+```{r,fig.align='center', fig.height=5, fig.width=8}
+
+#############################Fig.S12_PICRUSt2-PCoA##########################
+
+library(ggplot2)
+library(vegan)
+library(dplyr)  # %>%
+library(tibble)  # column_to_rownames
+
+rm(list=ls())
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Bacteria/otu/picrust2/out2/")
+
+# read kegg htext
+kegg <- read.table("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Bacteria/otu/picrust2/KEGG/kegg htext.txt", 
+                   sep = "\t",fill = TRUE,header = T,quote = "")
+
+# read group information
+group <- read.csv("sample_metadata.csv", header = T)
+group <- na.omit(group)
+group$type <- group$plants 
+group[group$type %in% c("Bare land","Suaeda","Tamarix chinensis"),]$type = "Wildland"
+group[group$type %in% c("Cotton","Maize"),]$type = "Farmland"
+
+# read KO data
+ko_abundance <- read.table("KO_metagenome_out/pred_metagenome_unstrat.tsv", header = T, check.names = F)
+
+# filter data
+ko_abundance <- ko_abundance[,colnames(ko_abundance) %in% c("function", group$sample.id)]
+abundance = ko_abundance %>% column_to_rownames("function")
+ko_abundance <-ko_abundance[rowSums(abundance) != 0,]  # filter KO that occurs at least in one sample
+
+# annotate KO with kegg htext
+ko_abundance2 <- merge(kegg,ko_abundance,by.x = "KO",by.y="function")
+table(duplicated(paste0(ko_abundance2$pathway_id,ko_abundance2$KO)))  # check duplicate
+
+# summarize accoding to pathway
+ko_abundance3 <- ko_abundance2[,c("pathway_id",colnames(ko_abundance)[2:26])]
+ko_abundance4 <- aggregate(. ~ pathway_id, data = ko_abundance3, FUN = sum)
+
+# merge pathway and KO table
+counts0 <- column_to_rownames(ko_abundance4,"pathway_id")
+counts <- as.data.frame(t(counts0))
+
+pcoa <- cmdscale(vegdist(decostand(counts, "hellinger"), method = 'bray'), k = (nrow(counts) - 1), eig = TRUE)
+pcoa_exp <- pcoa$eig/sum(pcoa$eig)  # explained variance
+pcoa1 <- paste0('PCo1 (', round(100*pcoa_exp[1], 2) ,'%', ')')
+pcoa2 <- paste0('PCo2 (', round(100*pcoa_exp[2], 2) ,'%', ')')
+
+site <- data.frame(pcoa$point)[1:2]
+site$sample <- rownames(site)
+site <- merge(site, group, by.x = 'sample',by.y = "sample.id")
+names(site)[2:3] <- c('pcoa1', 'pcoa2')
+
+counts$id <- rownames(counts)
+group$id <- group$sample.id
+counts <- merge(counts,group,by ="id")
+rownames(counts) <- counts$id
+
+# permutation test
+permanova <- adonis2(counts[,2:458] ~ counts$type,distance = 'bray', permutations = 999, parallel=6)
+
+# create dataframe of r value
+rletter.data <- data.frame(
+  label = c(sprintf(" 'Type:' ~ italic(R)^2 ~ '=' ~ %.3g ~ '(Df = %.3g;' ~ 'F = %.3g)'", 
+            permanova["counts$type","R2"],
+            permanova["counts$type","Df"],
+            permanova["counts$type","F"])), 
+  y = c(range(site[,"pcoa2"])[2] + 0.1 * diff(range(site[,"pcoa2"]))),
+  x = c(range(site[,"pcoa1"])[1] + 0.98 * diff(range(site[,"pcoa1"]))))
+
+# create dataframe of P value
+df <- data.frame(p_value = c(permanova["counts$type","Pr(>F)"]),
+                 y = c(range(site[,"pcoa2"])[2] + 0.1 * diff(range(site[,"pcoa2"]))),
+                 x = c(range(site[,"pcoa1"])[1] + 0.95 * diff(range(site[,"pcoa1"]))))
+
+# set colors
+colors <- c("red","blue")
+
+p2 <- ggplot(data = site, aes(x = pcoa1, y = pcoa2)) +
+      geom_point(aes(colour = factor(plants,levels = c("Bare land","Suaeda","Tamarix chinensis","Cotton","Maize")),
+                     shape = factor(type,levels = c("Farmland","Wildland"))), size = 7, alpha = 0.8) +
+      scale_colour_manual(name = "Habitat",
+                          label = c(
+                                    'Bare land'='Bareland',
+                                    'Cotton'='Cotton',
+                                    'Maize'='Maize',
+                                    'Suaeda'='Suaeda',
+                                    'Tamarix chinensis'='Tamarix'), 
+                          values = c("red","blue","purple","darkgreen","deepskyblue"),
+                          guide=guide_legend(override.aes=list(shape = 16),order=3)) +
+      scale_shape_manual(name = "Type",
+                         values = c(17,16),
+                         guide = guide_legend(order=2)) +
+      labs(x = pcoa1, y = pcoa1) +
+      ggtitle("Pathway-PCoA") +
+      #lims(x = c(-2.5, 5), y = c(-2, 3)) +
+      geom_text(data=rletter.data,aes(x = x-0.01, y = y+0.00,label = label), parse = T, color = 'red', size = 5, hjust = 1) +
+      geom_text(data=df[df$p_value <= 0.05 & df$p_value > 0.01,], aes(x = x-0.005, y = y+0.00, label = "*"), color = 'red', size=5, hjust = 1) +
+      geom_text(data=df[df$p_value <= 0.01 & df$p_value > 0.001,], aes(x = x-0.005, y = y+0.00, label = "**"), color = 'red', size=5, hjust = 1) +
+      geom_text(data=df[df$p_value <= 0.001,],aes(x = x-0.005, y = y+0.00,label = "***"), color = 'red', size=5, hjust = 1) +
+      theme_bw() +
+      theme(
+            plot.title = element_text(size = 20, face = "bold", hjust=0.5),
+            axis.title = element_text(size = 15, face = "bold"),
+            axis.text = element_text(size = 12, color="black", face = "bold"),
+            legend.title = element_text(colour = "black", size = 15, face = "bold"),
+            legend.text = element_text(colour = "black", size = 15, face = "bold"),
+            #legend.spacing = unit(0.1, "cm")
+          )
+p2
+
+
+# saveRDS(p2,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/picrust2/PCoA.rda")
+# 
+# 
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/picrust2/PCoA.svg", p2, height = 5, width = 7)
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/picrust2/PCoA.pdf", p2, height = 5, width = 7)
+
+
+```

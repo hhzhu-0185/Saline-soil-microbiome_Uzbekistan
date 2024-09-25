@@ -1,0 +1,174 @@
+---
+title: "Fig.S6_MCoIA"
+author: "Huanhuan Zhu"
+date: "2024-09-25"
+output: html_document
+---
+
+```{r,fig.align='center', fig.height=4, fig.width=6}
+
+#############################Fig.S6_MCoIA##########################
+
+library(omicade4)
+library(vegan)
+library(ggplot2)
+library(patchwork)
+
+
+rm(list=ls())
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/AMF/otu/")
+
+# Read OTU table
+# scale within each taxon, keeping the origin variances within taxon.
+AMF <- read.csv("otu_amfFlattening.csv",row.names = 1)
+AMF <- scale(AMF)  
+#AMF <- AMF[rowSums(AMF)!=0,]
+#AMF <- decostand(AMF,"hellinger")
+
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Bacteria/otu/")
+Bacteria <- read.csv("otu_bacteriaFlattening.csv",row.names = 1)
+Bacteria <- scale(Bacteria)
+#Bacteria <- Bacteria[rowSums(Bacteria)!=0,]
+#Bacteria <- decostand(Bacteria,"hellinger")
+
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Fungi/otu/")
+Fungi <- read.csv("otu_fungiFlattening.csv",row.names = 1)
+Fungi <- scale(Fungi)
+#Fungi <- Fungi[rowSums(Fungi)!=0,]
+#Fungi <- decostand(Fungi,"hellinger")
+
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Protist/otu/")
+Protists <- read.csv("otu_protistFlattening.csv",row.names = 1)
+Protists <- scale(Protists)
+#Protist <- Protist[rowSums(Protist)!=0,]
+#Protist <- decostand(Protist,"hellinger")
+
+SA <- list("AMF"=AMF,"Bacteria"=Bacteria,"Fungi"=Fungi,"Protists"=Protists)
+
+# Evaluating the similarity among different samples by hierarchical cluster analysis
+layout(matrix(1:4, 1, 4))
+par(mar = c(2, 1, 0.1, 6))
+for (df in SA) {
+  d <- dist(t(df))
+  hcl <- hclust(d)
+  dend <- as.dendrogram(hcl)
+  plot(dend, horiz = TRUE)
+}
+
+# Conducting MCoIA
+mcoin <- mcia(SA, cia.nf = 4, cia.scan = FALSE, nsc = TRUE)
+
+
+# Simple plot
+type <- colnames(SA$AMF)
+type <- sapply(strsplit(type, split="U"), function(x) x[1])
+type
+
+plot(mcoin, axes = 1:2, phenovec = type, sample.lab = FALSE, df.color = 1:4)
+
+
+# Contribution of each axis
+df1 <- as.data.frame(mcoin$mcoa$pseudoeig)
+names(df1) <- "eig"
+df1$relative <- df1$eig/sum(df1$eig)
+df1$number <- 1:nrow(df1)
+
+  
+# Contribution of factors on each axis
+df2 <- as.data.frame(mcoin$mcoa$cov2)
+df2$type <- rownames(df2)
+
+# MCoIA plot
+df3 <- as.data.frame(mcoin$mcoa$Tli)
+df3$type <- rownames(df3)
+
+# Creating new group
+df3$habitat <- substr(df3$type, 1, 2)
+df3$taxon <- substr(df3$type, 6, nchar(df3$type))
+
+
+# plot
+# Contribution of each axis
+p1 <- ggplot(df1) +
+      geom_col(aes(x = factor(number), y = relative), fill="black") +
+      labs(x = "MCOA Dimension", y = "% of variation") +
+      theme_bw() +
+      theme(
+        axis.text =element_text(size = 12,color = "black", face = "bold"), 
+        axis.title = element_text(size = 15,face = "bold"))
+p1
+
+# Contribution of factors on axis 1
+p2 <- ggplot(df2) +
+  geom_col(aes(x = cov21/df1$eig[1],y = factor(type,levels = c(df2$type[order(df2$cov21,decreasing = F)]))), fill = "black") +
+  labs(x = "Contribution to MCOA1", y = "Taxon") +
+  #ggtitle("MCOA1(16.5% of the global covariance)") +
+  theme_bw() +
+  theme(
+    plot.title = element_text(size = 20),
+    axis.text  = element_text(size = 12, color = "black", face = "bold"), 
+    axis.title = element_text(size=15, face = "bold"))
+p2
+
+# Contribution of factors on axis 2
+p3 <- ggplot(df2) +
+      geom_col(aes(x=cov22/df1$eig[2],y = factor(type, levels = c(df2$type[order(df2$cov21,decreasing = F)]))), fill = "black") +
+      labs(x = "Contribution to MCOA2", y = "Taxon") +
+      #ggtitle("MCOA2(10.9% of the global covariance)") +
+      theme_bw() +
+      theme(
+        plot.title = element_text(size = 20),
+        axis.text  = element_text(size = 12, color = "black", face = "bold"), 
+        axis.title = element_text(size=15, face = "bold"))
+p3
+
+# MCoIA plot
+p4 <- ggplot(df3) +
+      geom_point(size=7,alpha=0.5, aes(x=Axis1,y=Axis2,
+                     color=factor(habitat,levels = c("CK","JP","CL","MH","YM")),
+                     shape=factor(taxon))) +
+      scale_colour_manual(
+                          name = "Habitat",
+                          label = c(
+                                    'CK'='Bareland',
+                                    'MH'='Cotton',
+                                    'YM'='Maize',
+                                    'JP'='Suaeda',
+                                    'CL'='Tamarix'),
+                          values = c("red","blue","purple","darkgreen","deepskyblue")) +
+      guides(color=guide_legend(override.aes=list(shape = 16),order=1),
+             shape=guide_legend(override.aes=list(),order=2)) +
+      labs(x = "MCOA1(16.5%)",y = "MCOA1(10.9%)", shape="Taxon") +
+      theme_bw() +
+      theme(
+        plot.title = element_text(size = 20, face = "bold",hjust=0.5), 
+        legend.title = element_text(colour = "black",size = 15,face = "bold"),
+        legend.text = element_text(colour = "black",size = 12,face = "bold"),
+        axis.text = element_text(colour = "black",size = 12, face = "bold"),
+        axis.title = element_text(colour = "black",size = 15, face = "bold")) 
+p4
+
+
+
+# saveRDS(p1,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/mcoa/MCoA_dimension.rda")
+# save(p2,df1,df2, df3, file = "E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/mcoa/MCoA_axis1.rda")
+# saveRDS(p3,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/mcoa/MCoA_axis2.rda")
+# saveRDS(p4,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/mcoa/MCoA_plot.rda")
+
+```{r,fig.align='center', fig.height=5.8, fig.width=12}
+
+p_all <- ((p4)| ((p1 / p2 / p3)) +
+          plot_layout(heights = c(8, 4,4))) +
+          plot_layout(width = c(5, 4)) #+
+          # plot_annotation(tag_levels = 'a') &
+          # theme(plot.tag = element_text(size = 20, face = "bold"))
+
+p_all
+
+# saveRDS(p_all,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/mcoa/MCoA_all.rda")
+
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/mcoa/MCoA.svg", p_all, height = 5.8, width = 12)
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/mcoa/MCoA.pdf", p_all, height = 5.8, width = 12)
+
+```
+

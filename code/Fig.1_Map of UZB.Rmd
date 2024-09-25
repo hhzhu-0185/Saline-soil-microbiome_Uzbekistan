@@ -1,0 +1,120 @@
+---
+title: "Fig.1_Map of UZB"
+author: "Huanhuan Zhu"
+date: "2024-09-25"
+output: html_document
+---
+
+```{r,fig.align='center', fig.height=7, fig.width=10}
+################################Fig.1_Map of UZB####################################
+
+library(cowplot)
+library(colorRamps)
+library(ggrepel)
+library(sf)
+library(ggspatial)
+
+rm(list=ls())
+
+# Read sites information
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/map")
+site <- read.csv("sample_metadata.csv",header = T)
+
+site.HMME<-st_as_sf(site,coords=c("longitude","latitude"),crs=4326)
+site.HMME$plant<-factor(site.HMME$plant,levels = c("Bareland","Suaeda","Tamarix","Cotton","Maize"))
+
+# Read map information
+uzb <- st_read("uzbekistan_regional.geojson")
+water<- st_read("hotosm_uzb_waterways_polygons_geojson.geojson")
+
+# Main of UZB map
+mapUZ <-  ggplot() + 
+          geom_sf(data = uzb, fill = "NA",color = "black", size = 0.3) + 
+          geom_sf(data = water, fill = "#87CEEB", color = "#87CEEB", size = 0.3) +
+          scale_size(range = c(1,5)) +
+          annotation_scale(location = "bl", line_width = 1, text_cex = 1) +
+          annotation_north_arrow(location = "tr", which_north = "true",
+                                 height = unit(1.5, "cm"), 
+                                 width = unit(1.5, "cm"),
+                                 style = north_arrow_fancy_orienteering) +
+          geom_sf(data=site.HMME, aes(color = plant), size = 5) +
+          scale_color_manual(name = "Habitat", 
+                             values = c("red","blue","purple","darkgreen","deepskyblue"),
+                             labels = c( "Bareland" = "Bareland", 
+                                         "Suaeda" = "Suaeda", 
+                                         "Tamarix" = "Tamarix", 
+                                         "Cotton",  
+                                         "Maize")) +
+          coord_sf(crs = "+proj=laea +lat_0=42 +lon_0=64.5853") +
+          theme_bw() +
+          xlab("Longitude") +
+          ylab("Latitude") +
+          theme(plot.margin = unit(c(0,0,0,0),"mm"),
+                #legend.position = "none",
+                legend.title = element_text(size = 15,face = "bold",hjust=0.5),
+                legend.text = element_text(size = 12,face = "bold"),
+                axis.text = element_text(size = 12,colour = "black",face = "bold"),
+                axis.title = element_text(size = 15,colour = "black",face = "bold")) 
+          #theme(plot.margin = margin(t = 10, r = 10, b = 10, l = 10, unit = "pt"))
+
+# Small window of UZB map
+mapUZ_detail <- ggplot() + 
+                geom_sf(data = uzb, fill = "NA", color = "black",size = 0.5) +
+                geom_sf(data = water, fill = "#87CEEB", color = "#87CEEB", size = 0.3) +
+                scale_size(range = c(1,5)) +
+                annotation_scale(location = "br", line_width = 1, text_cex = 1) +
+                geom_sf(data = site.HMME, aes(color = plant), size = 5) +
+                coord_sf(ylim = c(0,800), xlim = c(0,700),crs = "+proj=laea +lat_0=40.59 +lon_0=67.61") +
+                scale_color_manual(name = "Habitat", 
+                                   values = c("red","blue","purple","darkgreen","deepskyblue"),
+                                   labels = c( "Bareland"="Bareland", 
+                                               "Suaeda"="Suaeda",
+                                               "Tamarix"="Tamarix",
+                                               "Cotton", 
+                                               "Maize")) + 
+                scale_y_continuous(breaks = c(40.591,40.594,40.597)) +
+                scale_x_continuous(breaks = c(67.610,67.614,67.618)) +
+                guides(color = "none") +
+                theme_bw() +
+                theme(aspect.ratio = 0.8, 
+                      plot.margin = unit(c(0,0,0,0),"mm"), 
+                      panel.grid = element_blank(),
+                      axis.text = element_text(color = "black", face = "bold"))
+
+# Combine the window with map
+mapUZ_all <- ggdraw() +
+             draw_plot(mapUZ) +
+             draw_plot(mapUZ_detail, x = 0.48, y = 0.66, width = 0.33, height = 0.25)
+
+# Link arrow bwtween window and map
+p_all <-  mapUZ_all + 
+          theme(plot.margin = margin(t = 10, r = 10, b = 10, l = 10, unit = "pt")) +
+            geom_segment(aes(x = 0.595, y = 0.452, 
+                             xend = 0.66, yend = 0.66), 
+                         arrow = arrow(length = unit(0.5, "cm")), color = "darkgrey")
+
+print(p_all)
+
+# Different position of arrow
+mapUZ_all1 <- ggdraw() +
+              draw_plot(mapUZ) +
+              draw_plot(mapUZ_detail, x = 0.45, y = 0.66, width = 0.33, height = 0.25)
+
+
+p_all1 <- mapUZ_all1 + 
+          theme(plot.margin = margin(t = 10, r = 10, b = 10, l = 10, unit = "pt")) +
+          geom_segment(aes( x = 0.574, y = 0.445,
+                            xend = 0.64, yend = 0.66),
+                       arrow = arrow(length = unit(0.5, "cm")), color = "darkgrey")
+
+
+# saveRDS(p_all,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/map/Map_UZ.rda")
+# saveRDS(p_all1,"E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/map/Map_UZ1.rda")
+# 
+# 
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/map/Map_UZ.svg", p_all, height = 7, width = 10)
+# ggsave("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Figures/map/Map_UZ.pdf", p_all, height = 7, width = 10)
+
+
+# save height=7,width= 10
+```
