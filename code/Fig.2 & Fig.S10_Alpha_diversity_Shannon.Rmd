@@ -1,0 +1,572 @@
+---
+title: "Fig.2 & Fig.S10_Alpha_diversity_Shannon"
+author: "Huanhuan Zhu"
+date: "2025-02-17"
+output: html_document
+---
+
+```{r, fig.align='center',fig.height = 6, fig.width=8, warning=FALSE, message=FALSE}
+
+#############################Fig.2 & Fig.S10_Alpha_diversity_Shannon###########################
+
+library(vegan)
+library(picante)
+library(ggplot2)
+library(patchwork)
+library(ggpubr)
+library(splitstackshape)
+library(dplyr)
+library(stringr)
+library(agricolae) # kruskal for nonparametric tests, getting Chi square value, P value and multiple comparision result
+library(ggtext)
+
+### 1. AMF
+
+rm(list=ls())
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/AMF/otu/")
+
+# Reading OTU table
+otu_all0 <- read.csv("otu_amfFlattening.csv", check.names = F, row.names = 1, header = T)
+otu_all0 <- t(otu_all0)
+
+# Calculating alpha diversity indices
+alpha <- function(x, tree = NULL, base = exp(1)) {
+                  est <- estimateR(x)  # Richness,Chao1 and ACE
+                  Richness <- est[1, ]
+                  Chao1 <- est[2, ]
+                  ACE <- est[4, ]
+                  Shannon <- diversity(x, index = 'shannon', base = base)  # Shannon
+                  Simpson <- diversity(x, index = 'simpson')  # Gini-Simpson
+                  Pielou <- Shannon / log(ACE, base)  # Evenness
+                  goods_coverage <- 1 - rowSums(x == 1) / rowSums(x)  # The proportion of sequences which are more than one in each sample
+                  
+                  result <- data.frame(Richness, Shannon, Simpson, Pielou, Chao1, ACE, goods_coverage)
+                  if (!is.null(tree)) {  # Calculating phylogenetic diversity
+                    PD_whole_tree <- pd(x, tree, include.root = FALSE)[1]
+                    names(PD_whole_tree) <- 'PD_whole_tree'
+                    result <- cbind(result, PD_whole_tree)
+                  }
+                  result
+                }
+
+alpha_all <- alpha(otu_all0, base = 2)
+alpha_all$sample.id <- rownames(alpha_all)
+
+# read metadata file
+group0 <- read.csv("sample_metadata.csv", header = T)
+group0 <- na.omit(group0)
+group <- group0[order(group0$sample.id), ]  #  Order by alphabetical order
+identical(alpha_all$sample.id,group$sample.id)  #  Check if sample.ids in two group are same
+
+# Combining alpha diversity indices and group information
+alpha_all0 <- merge(alpha_all, group, by = "sample.id")
+
+# Calculating mean and stand stand deviation by plants
+mean<-aggregate(Shannon~plants, data = alpha_all0, FUN = "mean")
+names(mean)[2] <- "mean"
+sd<-aggregate(Shannon~plants, data = alpha_all0, FUN = "sd")
+names(sd)[2] <- "sd"
+
+# Combining mean,stand deviation with alpha diversity indices
+# Merging the three elements continuously with Reduce
+alpha_all0 <- Reduce(function(x, y) merge(x, y, by = "plants", all = TRUE), list(alpha_all0, mean, sd))
+
+
+
+# Nonparametric test
+ST <- with(alpha_all0, kruskal(Shannon, plants, p.adj = "fdr"))
+
+# Extracting Chi square value and P value from the result
+statis <- as.data.frame(rbind(ST$statistics[ ,1:2]))
+
+# Adding significance
+statis$sig <- 0
+statis[statis$p.chisq < 0.001, ]$sig  = rep(" < 0.001", nrow(statis[statis$p.chisq < 0.001, ]))
+statis[statis$p.chisq > 0.001, ]$sig  = paste0(" = ", round(statis[statis$p.chisq > 0.001, ]$p.chisq, 3))
+
+# Creating dataframe for Chi square value and P value
+# Sprintf for pasting texts and values
+# asterisk (*) among elements represent pasting without space, tilde (~) among elements represent pasting witht space
+rp.value <- ifelse(statis$p.chisq < 0.001, 
+                   sprintf("italic(P) == %.2f %%*%% 10^%.0f ~ (italic(chi^2) == %.3g)", 
+                           statis$p.chisq / 10^floor(log10(statis$p.chisq)), 
+                           floor(log10(statis$p.chisq)), 
+                           statis$Chisq),
+                   sprintf("italic(P) == %.3g ~ (italic(chi^2) == %.3g)", statis$p.chisq, statis$Chisq))
+
+# Extracting multiple comparision result
+statis1 <- as.data.frame(rbind(ST$groups))
+# Extracting mean of Nonparametric tests
+statis2 <- as.data.frame(rbind(ST$means))
+
+# Extracting Ymax for add letters of multiple comparision
+p1 <- ggplot(data = alpha_all0, aes(y=Shannon, x=factor(plants))) +
+  stat_boxplot(geom = "errorbar",
+               width=0.3)
+
+ymaxdata <- layer_data(p1)
+levels(factor(alpha_all0$plants)) == rownames(statis2)  # If the order of Ymax is the same as the order of mean of Nonparametric tests
+statis2$ymax <- ymaxdata$ymax  # Merging Ymax with statis2, otherwise the order of statis2 will change after merge statis2 with statis1
+
+# Merging dataframe of multiple comparision result with dataframe of mean of nonparametric tests
+statis1$id <- rownames(statis1)
+statis2$id <- rownames(statis2)
+statis2 <- merge(statis2, statis1,by="id")
+
+# Creating dataframe of geom_text for letters of nonparametric tests
+multcomp.data <- data.frame(
+                            abc = factor(statis2$groups),
+                            x = statis2$id,
+                            y = as.numeric(statis2$ymax),
+                            plants = statis2$id)
+
+# plot
+alpha_all0$plants <- factor(alpha_all0$plants, levels = c("Bare land", "Suaeda", "Tamarix chinensis", "Cotton", "Maize"))
+p_amf <-  ggplot(data = alpha_all0, aes(y = Shannon, x = plants, color = plants)) +
+          stat_boxplot(geom = "errorbar", width = 0.3) +
+          geom_boxplot(width = 0.5) +
+        #  geom_jitter(size=0.8) +
+          labs(x = "", y = "Shannon diversity", title = "AM fungi-Alpha diversity") +
+          scale_x_discrete(labels = c(
+                                      'Bare land' = "Bareland", 
+                                      'Cotton' = "Cotton", 
+                                      'Maize' = "Maize", 
+                                      'Suaeda' = "Suaeda",
+                                      'Tamarix chinensis' = "Tamarix")) +
+          scale_color_manual(name = "Habitat", 
+                             values = c("red","blue","purple","darkgreen","deepskyblue"),
+                             labels = c( "Bare land"="Bareland", 
+                                         "Suaeda"="Suaeda",
+                                         "Tamarix chinensis"="Tamarix",
+                                         "Cotton", 
+                                         "Maize")) + 
+          annotate("text",x=3, y=6.6, label=rp.value, col = "red", size = 5, parse=TRUE) +
+          geom_text(data = multcomp.data,aes(x = x,y = y + 0.4, label = abc), color = "black", size = 6, hjust = 0.5) +
+          theme_bw() +
+          ylim(3,7) +
+          theme(panel.grid = element_blank(), 
+                axis.ticks.y = element_line(color = "black", linewidth = 0.5)) +
+          theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold"),
+                axis.title = element_text(size = 16, face = "bold"),
+                axis.title.x = element_blank(),
+                axis.text = element_text(size = 12, face = "bold", color = "black"),
+                legend.title = element_text(size = 16, face = "bold", color = "black", hjust=0),
+                legend.text = element_text(size = 12, face = "bold", color = "black"))
+p_amf
+
+
+
+### 2. Bacteria
+
+rm(list = setdiff(ls(), "p_amf"))
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Bacteria/otu/")
+
+
+# Reading OTU table
+otu_all0 <- read.csv("otu_bacteriaFlattening.csv",check.names = F, row.names = 1, header = T)
+otu_all0 <- t(otu_all0)
+
+# Calculating alpha diversity indices
+alpha <- function(x, tree = NULL, base = exp(1)) {
+                  est <- estimateR(x)
+                  Richness <- est[1, ]
+                  Chao1 <- est[2, ]
+                  ACE <- est[4, ]
+                  Shannon <- diversity(x, index = 'shannon', base = base)
+                  Simpson <- diversity(x, index = 'simpson')
+                  Pielou <- Shannon / log(ACE, base)
+                  goods_coverage <- 1 - rowSums(x == 1) / rowSums(x)
+                  
+                  result <- data.frame(Richness, Shannon, Simpson, Pielou, Chao1, ACE, goods_coverage)
+                  if (!is.null(tree)) {
+                    PD_whole_tree <- pd(x, tree, include.root = FALSE)[1]
+                    names(PD_whole_tree) <- 'PD_whole_tree'
+                    result <- cbind(result, PD_whole_tree)
+                  }
+                  result
+                }
+
+
+alpha_all <- alpha(otu_all0, base = 2)
+alpha_all$sample.id <- rownames(alpha_all)
+
+# Reading metadata
+group0 <- read.csv("sample_metadata.csv", header = T)
+group0 <- na.omit(group0)
+group <- group0[order(group0$sample.id), ]  
+identical(alpha_all$sample.id,group$sample.id)
+
+# Combining alpha diversity indices and group information
+alpha_all0 <- merge(alpha_all, group,by = "sample.id")
+
+# Calculating mean and stand stand deviation by plants
+mean<-aggregate(Shannon~plants, data = alpha_all0, FUN = "mean")
+names(mean)[2] <- "mean"
+sd<-aggregate(Shannon~plants, data = alpha_all0, FUN = "sd")
+names(sd)[2] <- "sd"
+
+# Combining mean,stand deviation with alpha diversity indices
+# Merging the three elements continuously with Reduce
+alpha_all0 <- Reduce(function(x, y) merge(x, y, by = "plants", all = TRUE), list(alpha_all0, mean, sd))
+
+
+
+# Nonparametric test
+ST <- with(alpha_all0, kruskal(Shannon, plants, p.adj = "fdr"))
+
+# Extracting Chi square value and P value from the result
+statis <- as.data.frame(rbind(ST$statistics[ ,1:2]))
+
+# Adding significance
+statis$sig <- 0
+statis[statis$p.chisq < 0.001, ]$sig  = rep(" < 0.001",nrow(statis[statis$p.chisq < 0.001,]))
+statis[statis$p.chisq > 0.001, ]$sig  = paste0(" = ",round(statis[statis$p.chisq > 0.001,]$p.chisq, 3))
+
+# Creating dataframe for Chi square value and P value
+# Sprintf for pasting texts and values
+# asterisk (*) among elements represent pasting without space, tilde (~) among elements represent pasting witht space
+rp.value <- ifelse(statis$p.chisq < 0.001, 
+                   sprintf("italic(P) == %.2f %%*%% 10^%.0f ~ (italic(chi^2) == %.3g)", 
+                           statis$p.chisq / 10^floor(log10(statis$p.chisq)), 
+                           floor(log10(statis$p.chisq)), 
+                           statis$Chisq),
+                   sprintf("italic(P) == %.3g ~ (italic(chi^2) == %.3g)", statis$p.chisq, statis$Chisq))
+
+# Extracting multiple comparision result
+statis1 <- as.data.frame(rbind(ST$groups))
+# Extracting mean of Nonparametric tests
+statis2 <- as.data.frame(rbind(ST$means))
+
+# Extracting Ymax for add letters of multiple comparision
+p1 <- ggplot(data = alpha_all0, aes(y = Shannon, x = factor(plants))) +
+  stat_boxplot(geom = "errorbar",
+               width = 0.3)
+ymaxdata <- layer_data(p1) 
+levels(factor(alpha_all0$plants)) == rownames(statis2)
+statis2$ymax <- ymaxdata$ymax
+
+# Merging dataframe of multiple comparision result with dataframe of mean of nonparametric tests
+statis1$id <- rownames(statis1)
+statis2$id <- rownames(statis2)
+statis2 <- merge(statis2, statis1, by="id")
+
+# Creating dataframe of geom_text for letters of nonparametric tests
+multcomp.data <- data.frame(
+                            abc = factor(statis2$groups),
+                            x = statis2$id,
+                            y = as.numeric(statis2$ymax),
+                            plants = statis2$id)
+
+
+
+# plot
+alpha_all0$plants <- factor(alpha_all0$plants, levels = c("Bare land", "Suaeda", "Tamarix chinensis", "Cotton", "Maize"))
+p_bac <-  ggplot(data = alpha_all0, aes(y = Shannon, x = plants, color = plants)) +
+          stat_boxplot(geom = "errorbar", width = 0.3) +
+          geom_boxplot(width = 0.5) +
+          #  geom_jitter(size=0.8) +
+          labs(x ="", y = "Shannon diversity", title = "Prokaryotes-Alpha diversity") +
+          scale_x_discrete(labels = c(
+                                      'Bare land' = "Bareland", 
+                                      'Cotton' = "Cotton", 
+                                      'Maize' = "Maize", 
+                                      'Suaeda' = "Suaeda",
+                                      'Tamarix chinensis' = "Tamarix")) +
+          scale_color_manual(name = "Habitat", 
+                            values = c("red","blue","purple","darkgreen","deepskyblue"),
+                            labels = c( "Bare land"="Bareland", 
+                                        "Suaeda"="Suaeda",
+                                        "Tamarix chinensis"="Tamarix",
+                                        "Cotton", 
+                                        "Maize")) + 
+          annotate("text",x=3, y=9.2, label=rp.value, col = "red", size = 5, parse=TRUE) + 
+          geom_text(data = multcomp.data,aes(x = x,y = y + 0.4,label = abc), color = "black", size = 6, hjust = 0.5) +
+          theme_bw() +
+          ylim(6.5,9.5) +
+          theme(panel.grid = element_blank(), 
+                axis.ticks.y = element_line(color="black", linewidth=0.5)) +
+          theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold"),
+                axis.title = element_text(size = 16, face = "bold"),
+                axis.title.x = element_blank(),
+                axis.text = element_text(size = 12, face = "bold", color = "black"),
+                legend.title = element_text(size = 16, face = "bold", color = "black", hjust=0),
+                legend.text = element_text(size = 12, face = "bold", color = "black"))
+p_bac
+
+
+
+### 3. Fungi
+
+rm(list = setdiff(ls(), c("p_amf", "p_bac")))
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Fungi/otu/")
+
+
+# Reading OTU table
+otu_all0 <- read.csv("otu_fungiFlattening.csv", check.names = F, row.names = 1, header = T)
+otu_all0 <- t(otu_all0)
+
+# Calculating alpha diversity indices
+alpha <- function(x, tree = NULL, base = exp(1)) {
+                  est <- estimateR(x)
+                  Richness <- est[1, ]
+                  Chao1 <- est[2, ]
+                  ACE <- est[4, ]
+                  Shannon <- diversity(x, index = 'shannon', base = base)
+                  Simpson <- diversity(x, index = 'simpson')    #Gini-Simpson 指??
+                  Pielou <- Shannon / log(ACE, base)
+                  goods_coverage <- 1 - rowSums(x == 1) / rowSums(x)
+                  
+                  result <- data.frame(Richness, Shannon, Simpson, Pielou, Chao1, ACE, goods_coverage)
+                  if (!is.null(tree)) {
+                    PD_whole_tree <- pd(x, tree, include.root = FALSE)[1]
+                    names(PD_whole_tree) <- 'PD_whole_tree'
+                    result <- cbind(result, PD_whole_tree)
+                  }
+                  result
+                }
+
+alpha_all <- alpha(otu_all0, base = 2)
+alpha_all$sample.id <- rownames(alpha_all)
+
+# read metadata file
+group0 <- read.csv("sample_metadata.csv", header = T)
+group0 <- na.omit(group0)
+group <- group0[order(group0$sample.id),]
+identical(alpha_all$sample.id, group$sample.id)
+
+# Combining alpha diversity indices and group information
+alpha_all0 <- merge(alpha_all, group, by = "sample.id")
+
+# Calculating mean and stand stand deviation by plants
+mean<-aggregate(Shannon~plants,data = alpha_all0,FUN ="mean")
+names(mean)[2] <- "mean"
+sd<-aggregate(Shannon~plants, data = alpha_all0, FUN ="sd")
+names(sd)[2] <- "sd"
+
+# Combining mean,stand deviation with alpha diversity indices
+# Merging the three elements continuously with Reduce
+alpha_all0 <- Reduce(function(x, y) merge(x, y, by = "plants", all = TRUE), list(alpha_all0, mean, sd))
+
+
+
+# Nonparametric test
+ST <- with(alpha_all0,kruskal(Shannon, plants, p.adj = "fdr"))
+
+# Extracting Chi square value and P value from the result
+statis <- as.data.frame(rbind(ST$statistics[ ,1:2]))
+
+# Adding significance
+statis$sig <- 0
+statis[statis$p.chisq < 0.001, ]$sig  = rep(" < 0.001", nrow(statis[statis$p.chisq < 0.001, ]))
+statis[statis$p.chisq > 0.001, ]$sig  = paste0(" = ", round(statis[statis$p.chisq > 0.001, ]$p.chisq, 3))
+
+# Creating dataframe for Chi square value and P value
+# Sprintf for pasting texts and values
+# asterisk (*) among elements represent pasting without space, tilde (~) among elements represent pasting witht space??
+rp.value <- ifelse(statis$p.chisq < 0.001, 
+                   sprintf("italic(P) == %.2f %%*%% 10^%.0f ~ (italic(chi^2) == %.3g)", 
+                           statis$p.chisq / 10^floor(log10(statis$p.chisq)), 
+                           floor(log10(statis$p.chisq)), 
+                           statis$Chisq),
+                   sprintf("italic(P) == %.3g ~ (italic(chi^2) == %.3g)", statis$p.chisq, statis$Chisq))
+
+# Extracting multiple comparision result
+statis1 <- as.data.frame(rbind(ST$groups))
+# Extracting mean of Nonparametric tests
+statis2 <- as.data.frame(rbind(ST$means))
+
+# Extracting Ymax for add letters of multiple comparision
+p1 <- ggplot(data = alpha_all0, aes(y = Shannon, x = factor(plants))) +
+  stat_boxplot(geom = "errorbar",
+               width = 0.3)
+ymaxdata <- layer_data(p1) 
+levels(factor(alpha_all0$plants)) == rownames(statis2)
+statis2$ymax <- ymaxdata$ymax
+
+# Merging dataframe of multiple comparision result with dataframe of mean of nonparametric tests
+statis1$id <- rownames(statis1)
+statis2$id <- rownames(statis2)
+statis2 <- merge(statis2, statis1, by = "id")
+
+# Creating dataframe of geom_text for letters of nonparametric tests
+multcomp.data <- data.frame(
+                            abc = factor(statis2$groups),
+                            x = statis2$id,
+                            y = as.numeric(statis2$ymax),
+                            plants = statis2$id)
+
+
+
+# plot
+alpha_all0$plants <- factor(alpha_all0$plants, levels = c("Bare land", "Suaeda", "Tamarix chinensis", "Cotton", "Maize"))
+p_fung <- ggplot(data = alpha_all0, aes(y = Shannon, x = plants, color = plants)) +
+          stat_boxplot(geom = "errorbar", width = 0.3) +
+          geom_boxplot(width = 0.5) +
+          #  geom_jitter(size=0.8) +
+          labs(x = "", y = "Shannon diversity", title = "Fungi-Alpha diversity") +
+          scale_x_discrete(labels = c(
+                                      'Bare land' = "Bareland", 
+                                      'Cotton' = "Cotton", 
+                                      'Maize' = "Maize", 
+                                      'Suaeda' = "Suaeda",
+                                      'Tamarix chinensis' = "Tamarix")) +
+          scale_color_manual(name = "Habitat", 
+                            values = c("red","blue","purple","darkgreen","deepskyblue"),
+                            labels = c( "Bare land"="Bareland", 
+                                        "Suaeda"="Suaeda",
+                                        "Tamarix chinensis"="Tamarix",
+                                        "Cotton", 
+                                        "Maize")) + 
+          annotate("text",x=3, y=7.6, label=rp.value, col = "red", size = 5, parse=TRUE) +
+          geom_text(data = multcomp.data, aes(x = x, y = y + 0.4, label = abc), color = "black", size = 6, hjust = 0.5) +
+          theme_bw() +
+          ylim(4,8.0) +
+          theme(panel.grid=element_blank(), 
+                axis.ticks.y = element_line(color = "black", linewidth = 0.5)) +
+          theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold"),
+                axis.title = element_text(size = 16, face = "bold"),
+                axis.title.x = element_blank(),
+                axis.text = element_text(size = 12, face = "bold", color = "black"),
+                legend.title = element_text(size = 16, face = "bold", color = "black", hjust=0),
+                legend.text = element_text(size = 12, face = "bold", color = "black"))
+p_fung
+
+
+
+#### 4. Potist
+
+rm(list = setdiff(ls(), c("p_amf", "p_bac", "p_fung")))
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Protist/otu/")
+
+
+# Reading OTU table
+otu_all0 <- read.csv("otu_protistFlattening.csv",check.names = F,row.names = 1,header = T)
+otu_all0 <- t(otu_all0)
+
+# Calculating alpha diversity indices
+alpha <- function(x, tree = NULL, base = exp(1)) {
+                  est <- estimateR(x)
+                  Richness <- est[1, ]
+                  Chao1 <- est[2, ]
+                  ACE <- est[4, ]
+                  Shannon <- diversity(x, index = 'shannon', base = base)
+                  Simpson <- diversity(x, index = 'simpson')
+                  Pielou <- Shannon / log(ACE, base)
+                  goods_coverage <- 1 - rowSums(x == 1) / rowSums(x)
+                  
+                  result <- data.frame(Richness, Shannon, Simpson, Pielou, Chao1, ACE, goods_coverage)
+                  if (!is.null(tree)) {
+                    PD_whole_tree <- pd(x, tree, include.root = FALSE)[1]
+                    names(PD_whole_tree) <- 'PD_whole_tree'
+                    result <- cbind(result, PD_whole_tree)
+                  }
+                  result
+                }
+
+alpha_all <- alpha(otu_all0, base = 2)
+alpha_all$sample.id <- rownames(alpha_all)
+
+# read metadata file
+group0 <- read.csv("sample_metadata.csv", header = T)
+group0 <- na.omit(group0)
+group <- group0[order(group0$sample.id), ]  
+identical(alpha_all$sample.id, group$sample.id)
+
+# Combining alpha diversity indices and group information
+alpha_all0 <- merge(alpha_all, group,by = "sample.id")
+
+# Calculating mean and stand stand deviation by plants
+mean<-aggregate(Shannon~plants, data = alpha_all0, FUN = "mean")
+names(mean)[2] <- "mean"
+sd<-aggregate(Shannon~plants, data = alpha_all0, FUN = "sd")
+names(sd)[2] <- "sd"
+
+# Combining mean,stand deviation with alpha diversity indices
+# Merging the three elements continuously with Reduce
+alpha_all0 <- Reduce(function(x, y) merge(x, y, by = "plants", all = TRUE), list(alpha_all0, mean, sd))
+
+
+# Nonparametric test
+ST <- with(alpha_all0,kruskal(Shannon, plants, p.adj = "fdr"))
+
+# Extracting Chi square value and P value from the result
+statis <- as.data.frame(rbind(ST$statistics[ ,1:2]))
+
+# Adding significance
+statis$sig <- 0
+statis[statis$p.chisq < 0.001, ]$sig  = rep(" < 0.001", nrow(statis[statis$p.chisq < 0.001, ]))
+statis[statis$p.chisq > 0.001, ]$sig  = paste0(" = ", round(statis[statis$p.chisq > 0.001, ]$p.chisq, 3))
+
+# Creating dataframe for Chi square value and P value
+# Sprintf for pasting texts and values
+# asterisk (*) among elements represent pasting without space, tilde (~) among elements represent pasting witht space
+rp.value <- ifelse(statis$p.chisq < 0.001, 
+                   sprintf("italic(P) == %.2f %%*%% 10^%.0f ~ (italic(chi^2) == %.3g)", 
+                           statis$p.chisq / 10^floor(log10(statis$p.chisq)), 
+                           floor(log10(statis$p.chisq)), 
+                           statis$Chisq),
+                   sprintf("italic(P) == %.3g ~ (italic(chi^2) == %.3g)", statis$p.chisq, statis$Chisq))
+
+# Extracting multiple comparision result
+statis1 <- as.data.frame(rbind(ST$groups))
+statis1 <- as.data.frame(rbind(ST$groups))
+# Extracting mean of Nonparametric tests
+statis2 <- as.data.frame(rbind(ST$means))
+
+# Extracting Ymax for add letters of multiple comparision
+p1 <- ggplot(data = alpha_all0, aes(y = Shannon, x = factor(plants))) +
+  stat_boxplot(geom = "errorbar",
+               width = 0.3)
+ymaxdata <- layer_data(p1) 
+levels(factor(alpha_all0$plants)) == rownames(statis2)
+statis2$ymax <- ymaxdata$ymax
+
+# Merging dataframe of multiple comparision result with dataframe of mean of nonparametric tests
+statis1$id <- rownames(statis1)
+statis2$id <- rownames(statis2)
+statis2 <- merge(statis2, statis1, by = "id")
+
+# Creating dataframe of geom_text for letters of nonparametric tests
+multcomp.data <- data.frame(
+                            abc = factor(statis2$groups),
+                            x = statis2$id,
+                            y = as.numeric(statis2$ymax),
+                            plants = statis2$id)
+
+
+
+# plot
+alpha_all0$plants <- factor(alpha_all0$plants, levels = c("Bare land", "Suaeda", "Tamarix chinensis", "Cotton", "Maize"))
+p_prot <- ggplot(data = alpha_all0, aes(y = Shannon, x = plants, color = plants)) +
+          stat_boxplot(geom = "errorbar", width = 0.3) +
+          geom_boxplot(width = 0.5) +
+          #  geom_jitter(size=0.8) +
+          labs(x = "", y = "Shannon diversity", title = "Protists-Alpha diversity") +
+          scale_x_discrete(labels = c(
+                                      'Bare land' = "Bareland", 
+                                      'Cotton' = "Cotton", 
+                                      'Maize' = "Maize", 
+                                      'Suaeda' = "Suaeda",
+                                      'Tamarix chinensis' = "Tamarix")) +
+          scale_color_manual(name = "Habitat", 
+                            values = c("red","blue","purple","darkgreen","deepskyblue"),
+                            labels = c( "Bare land"="Bareland", 
+                                        "Suaeda"="Suaeda",
+                                        "Tamarix chinensis"="Tamarix",
+                                        "Cotton", 
+                                        "Maize")) + 
+          annotate("text",x=3, y=8.6, label=rp.value, col = "red", size = 5, parse=TRUE) + 
+          geom_text(data = multcomp.data, aes(x = x, y = y + 0.4, label = abc), color = "black", size = 6, hjust = 0.5) +
+          theme_bw() +
+          ylim(5,9) +
+          theme(panel.grid = element_blank(), 
+                axis.ticks.y = element_line(color = "black", linewidth = 0.5)) +
+          theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold"),
+                axis.title = element_text(size = 16, face = "bold"),
+                axis.title.x = element_blank(),
+                axis.text = element_text(size = 12, face = "bold", color = "black"),
+                legend.title = element_text(size = 16, face = "bold", color = "black", hjust=0),
+                legend.text = element_text(size = 12, face = "bold", color = "black"))
+p_prot
+
+```

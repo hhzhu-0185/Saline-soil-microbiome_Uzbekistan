@@ -1,0 +1,327 @@
+---
+title: "Fig.S17_iCAMP plot with asterisk (farmland and wildland)"
+author: "Huanhuan Zhu"
+date: "2025-02-17"
+output: html_document
+---
+
+```{r, fig.align='center',fig.height=6, fig.width=8, warning=FALSE, message=FALSE}
+
+#############################################Fig.3_iCAMP plot#########################################
+
+
+library(ggplot2)
+library(reshape2)
+library(patchwork)
+
+
+# 1. AMF
+
+# Phylogenetic signal selection
+rm(list=ls())
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/AMF/otu/iCAMP2/output0/")
+phy_sig <- read.csv("Test.PhyloSignalSummary.csv")
+phy_sig2 <- na.omit(melt(phy_sig[(phy_sig$index=="RAsig.adj" | phy_sig$index=="MeanR"),c(2:3,6:11)], id=c("n.min","index")))
+
+p1_amf <- ggplot(data=phy_sig2, aes(x=n.min, y=value, color=factor(variable))) +
+  geom_line(aes(linetype=factor(index))) +
+  geom_point() +
+  labs(title = "AM fungi-Phylogenetic signal", x="N.min", y= "Value") +
+  scale_x_continuous(breaks = seq(12,96,by=12), limits = c(12,96)) +
+  scale_color_manual(values = c("red","purple","blue","brown","darkgreen","darkblue"),
+                     label= c("pH.pearson"="pH",
+                              "salt_content.pearson"="Salt content",
+                              "avail_p.pearson"="Available phosphorus",
+                              "tn.pearson"="Total nitrogen",
+                              "tc.perason"="Total carbon",
+                              "tp.pearson"="Total phosphorus")) +
+  annotate("text", x=20, y=0.90, label="ds = 0.2", color="red", size=5) +
+  theme_bw() +
+  guides(color=guide_legend(title="Environment factor"),
+         linetype=guide_legend(title="Type")) +
+  theme(plot.title = element_text(size=20,face = "bold",hjust = 0.5),
+        axis.title = element_text(size=15,face = "bold"),
+        axis.text = element_text(size=12,color ="black",face="bold"),
+        legend.title = element_text(size=15,face = "bold"),
+        legend.text = element_text(size=12,face = "bold"))
+print(p1_amf)
+
+# Calculation community assembly process
+rm(list = setdiff(ls(), c("p1_amf")))
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/AMF/otu/iCAMP2/output/")
+
+result_icamp <- read.csv("AMF.ProcessImportance_EachGroup.csv")
+result_icamp2 <- result_icamp[result_icamp$Group %in% c("CK","CL","JP","YM","MH"), ]
+
+result_all2 <- result_icamp2[(result_icamp2$ds==0.2 & result_icamp2$n.min==72),c(5:10)]
+result_all2 <- melt(result_all2,id="Group")
+
+# prop.test
+sig_test <- result_all2[result_all2$value >0.01,]
+
+sig_test$group2 <- "test"
+sig_test[sig_test$Group == "CK" |sig_test$Group == "JP" | sig_test$Group == "CL" ,]$group2 <- "Wildland"
+sig_test[sig_test$Group == "YM" | sig_test$Group == "MH" ,]$group2 <- "Farmland"
+
+for (i in c("HoS", "DL", "DR")){
+  
+  farmland_successes <- c(sig_test[sig_test$variable == i & sig_test$group2 == "Farmland", "value"]*100)
+  farmland_total <- c(100, 100)
+  
+  # 荒地组的成功次数和总样本数
+  wildland_successes <- c(sig_test[sig_test$variable == i & sig_test$group2 == "Wildland", "value"]*100)
+  wildland_total <- c(100, 100, 100)
+  
+  # 使用 prop.test 进行两组比例检验
+  result <- prop.test(c(sum(farmland_successes), sum(wildland_successes)), c(sum(farmland_total), sum(wildland_total)))
+  print(i)
+  print(result)
+}
+
+
+result_all2$group2 <- "test"
+result_all2[result_all2$Group == "CK" |result_all2$Group == "JP" | result_all2$Group == "CL" ,]$group2 <- "Wildland"
+result_all2[result_all2$Group == "YM" | result_all2$Group == "MH" ,]$group2 <- "Farmland"
+result_all3 <- aggregate(. ~ group2 + variable,result_all2[,2:4], FUN="mean")
+
+# plot
+p2_amf <- ggplot(data=result_all3,aes(x = factor(group2, levels = c("Wildland","Farmland")), y = as.numeric(value),fill = factor(variable))) +
+  geom_col(width = 0.6) +
+  geom_text(data=result_all3[result_all3$value >0.01,],aes(label=paste0(round(value*100),"%"), color=factor(variable)),
+            position = position_stack(vjust =0.5),size=3,fontface="bold") +
+  annotate("text", x=c("Wildland"), y=c(0.55), label=c("***"), size=5, color="white", fontface="bold") +
+  annotate("text", x=c("Wildland"), y=c(0.12), label=c("*"), size=5, color="white", fontface="bold") +
+  annotate("text", x=c("Farmland"), y=c(0.26), label=c("***"), size=5, color="black", fontface="bold") +
+  labs(title = "AM fungi", x="Habitat", y= "Community assembly process (%)") +
+
+  scale_color_manual(values = c("white","white","black")) +
+  scale_fill_manual(values = c("#3b3b3b","#5c7cbc","#d580ec","#47ced1","#fde725"),
+                    label= c("HeS"="Heterogeneous selection",
+                             "HoS"="Homogeneous selection",
+                             "DL"="Dispersal limitation",
+                             "HD"="Homogeneous dispsersal",
+                             "DR"="Drift")) +
+  theme_bw() +
+  guides(fill=guide_legend(title="Process"),
+         color="none") +
+  theme(plot.title = element_text(size=20,face = "bold",hjust = 0.5),
+        axis.title = element_text(size=15,face = "bold"),
+        axis.title.x = element_blank(),
+        axis.text = element_text(size=12,color ="black",face="bold"),
+        legend.title = element_text(size=15,face = "bold"),
+        legend.text = element_text(size=12,face = "bold"))
+
+print(p2_amf)
+
+
+# 2. Bacteria
+
+# Phylogenetic signal selection
+rm(list = setdiff(ls(), c("p1_amf","p2_amf")))
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Bacteria/otu/iCAMP2/output0/")
+phy_sig <- read.csv("Bacteria.PhyloSignalSummary.csv")
+phy_sig2 <- na.omit(melt(phy_sig[(phy_sig$index=="RAsig.adj" | phy_sig$index=="MeanR"),c(2:3,6:11)], id=c("n.min","index")))
+
+p1_bac <- ggplot(data=phy_sig2, aes(x=n.min, y=value, color=factor(variable))) +
+  geom_line(aes(linetype=factor(index))) +
+  geom_point() +
+  labs(title = "Prokaryotes-Phylogenetic signal", x="N.min", y= "Value") +
+  scale_x_continuous(breaks = seq(12,96,by=12), limits = c(12,96)) +
+  scale_color_manual(values = c("red","purple","blue","brown","darkgreen","darkblue"),
+                     label= c("pH.pearson"="pH",
+                              "salt_content.pearson"="Salt content",
+                              "avail_p.pearson"="Available phosphorus",
+                              "tn.pearson"="Total nitrogen",
+                              "tc.perason"="Total carbon",
+                              "tp.pearson"="Total phosphorus")) +
+  annotate("text", x=20, y=0.90, label="ds = 0.2", color="red", size=5) +
+  theme_bw() +
+  guides(color=guide_legend(title="Environment factor"),
+         linetype=guide_legend(title="Type")) +
+  theme(plot.title = element_text(size=20,face = "bold",hjust = 0.5),
+        axis.title = element_text(size=15,face = "bold"),
+        axis.text = element_text(size=12,color ="black",face="bold"),
+        legend.title = element_text(size=15,face = "bold"),
+        legend.text = element_text(size=12,face = "bold"))
+print(p1_bac)
+
+# Calculation community assembly process
+rm(list = setdiff(ls(), c("p1_amf","p2_amf","p1_bac")))
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Bacteria/otu/iCAMP2/output/")
+
+result_icamp <- read.csv("Bacteria.ProcessImportance_EachGroup.csv")
+result_icamp2 <- result_icamp[result_icamp$Group %in% c("CK","CL","JP","YM","MH"), ]
+
+result_all2 <- result_icamp2[(result_icamp2$ds==0.2 & result_icamp2$n.min==36),c(5:10)]
+result_all2 <- melt(result_all2,id="Group")
+
+# prop.test
+sig_test <- result_all2[result_all2$value >0.01,]
+
+sig_test$group2 <- "test"
+sig_test[sig_test$Group == "CK" |sig_test$Group == "JP" | sig_test$Group == "CL" ,]$group2 <- "Wildland"
+sig_test[sig_test$Group == "YM" | sig_test$Group == "MH" ,]$group2 <- "Farmland"
+
+for (i in c("HoS", "HD", "DR")){
+  
+  farmland_successes <- c(sig_test[sig_test$variable == i & sig_test$group2 == "Farmland", "value"]*100)
+  farmland_total <- c(100, 100)
+  
+  # 荒地组的成功次数和总样本数
+  wildland_successes <- c(sig_test[sig_test$variable == i & sig_test$group2 == "Wildland", "value"]*100)
+  wildland_total <- c(100, 100, 100)
+  
+  # 使用 prop.test 进行两组比例检验
+  result <- prop.test(c(sum(farmland_successes), sum(wildland_successes)), c(sum(farmland_total), sum(wildland_total)))
+  print(i)
+  print(result)
+}
+
+
+for (i in c("DL")){
+  sig_test <- sig_test[sig_test$Group != "MH",]
+  farmland_successes <- c(sig_test[sig_test$variable == i & sig_test$group2 == "Farmland", "value"]*100)
+  farmland_total <- c(100, 100)
+  
+  # 荒地组的成功次数和总样本数
+  wildland_successes <- c(sig_test[sig_test$variable == i & sig_test$group2 == "Wildland", "value"]*100)
+  wildland_total <- c(100, 100, 100)
+  
+  # 使用 prop.test 进行两组比例检验
+  result <- prop.test(c(sum(farmland_successes), sum(wildland_successes)), c(sum(farmland_total), sum(wildland_total)))
+  print(i)
+  print(result)
+}
+
+result_all2$group2 <- "test"
+result_all2[result_all2$Group == "CK" |result_all2$Group == "JP" | result_all2$Group == "CL" ,]$group2 <- "Wildland"
+result_all2[result_all2$Group == "YM" | result_all2$Group == "MH" ,]$group2 <- "Farmland"
+result_all3 <- aggregate(. ~ group2 + variable,result_all2[,2:4], FUN="mean")
+
+p2_bac <- ggplot(data=result_all3,aes(x = factor(group2, levels = c("Wildland","Farmland")), y = as.numeric(value),fill = factor(variable))) +
+  geom_col(width = 0.6) +
+  geom_text(data=result_all3[result_all3$value >0.01,],aes(label=paste0(round(value*100),"%"), color=factor(variable)),
+            position = position_stack(vjust =0.5),size=3,fontface="bold") +
+  annotate("text", x=c("Wildland"), y=c(0.19), label=c("*"), size=5, color="black", fontface="bold") +
+  annotate("text", x=c("Wildland"), y=c(0.6), label=c("***"), size=5, color="white", fontface="bold") +
+  annotate("text", x=c("Farmland"), y=c(0.44), label=c("***"), size=5, color="white", fontface="bold") +
+  annotate("text", x=c("Farmland"), y=c(0.74), label=c("***"), size=5, color="white", fontface="bold") +
+  labs(title = "Prokaryotes", x="Habitat", y= "Community assembly process (%)") +
+  scale_fill_manual(values = c("#3b3b3b","#5c7cbc","#d580ec","#47ced1","#fde725"),
+                    label= c("HeS"="Heterogeneous selection",
+                             "HoS"="Homogeneous selection",
+                             "DL"="Dispersal limitation",
+                             "HD"="Homogeneous dispsersal",
+                             "DR"="Drift")) +
+  scale_color_manual(values = c("white","white","white","black")) +
+  theme_bw() +
+  guides(fill=guide_legend(title="Process"),
+         color="none") +
+  theme(plot.title = element_text(size=20,face = "bold",hjust = 0.5),
+        axis.title = element_text(size=15,face = "bold"),
+        axis.title.x = element_blank(),
+        axis.text = element_text(size=12,color ="black",face="bold"),
+        legend.title = element_text(size=15,face = "bold"),
+        legend.text = element_text(size=12,face = "bold"))
+print(p2_bac)
+
+
+# 3. Protist
+
+# Phylogenetic signal selection
+rm(list = setdiff(ls(), c("p1_amf","p2_amf","p1_bac","p2_bac")))
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Protist/otu/iCAMP2/output0/")
+phy_sig <- read.csv("Test.PhyloSignalSummary.csv")
+phy_sig2 <- na.omit(melt(phy_sig[(phy_sig$index=="RAsig.adj" | phy_sig$index=="MeanR"),c(2:3,6:11)], id=c("n.min","index")))
+
+p1_prot <- ggplot(data=phy_sig2, aes(x=n.min, y=value, color=factor(variable))) +
+  geom_line(aes(linetype=factor(index))) +
+  geom_point() +
+  labs(title = "Protists-Phylogenetic signal", x="N.min", y= "Value") +
+  scale_x_continuous(breaks = seq(12,96,by=12), limits = c(12,96)) +
+  scale_color_manual(values = c("red","purple","blue","brown","darkgreen","darkblue"),
+                     label= c("pH.pearson"="pH",
+                              "salt_content.pearson"="Salt content",
+                              "avail_p.pearson"="Available phosphorus",
+                              "tn.pearson"="Total nitrogen",
+                              "tc.perason"="Total carbon",
+                              "tp.pearson"="Total phosphorus")) +
+  annotate("text", x=20, y=0.90, label="ds = 0.2", color="red", size=5) +
+  theme_bw() +
+  guides(color=guide_legend(title="Environment factor"),
+         linetype=guide_legend(title="Type")) +
+  theme(plot.title = element_text(size=20,face = "bold",hjust = 0.5),
+        axis.title = element_text(size=15,face = "bold"),
+        axis.text = element_text(size=12,color ="black",face="bold"),
+        legend.title = element_text(size=15,face = "bold"),
+        legend.text = element_text(size=12,face = "bold"))
+print(p1_prot)
+
+# Calculation community assembly process
+rm(list = setdiff(ls(), c("p1_amf","p2_amf","p1_bac","p2_bac","p1_prot")))
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Protist/otu/iCAMP2/output1/")
+
+result_icamp <- read.csv("Protist.ProcessImportance_EachGroup.csv")
+result_icamp2 <- result_icamp[result_icamp$Group %in% c("CK","CL","JP","YM","MH"), ]
+
+result_all2 <- result_icamp2[(result_icamp2$ds==0.2 & result_icamp2$n.min==96),c(5:10)]
+result_all2 <- melt(result_all2,id="Group")
+
+# prop.test
+sig_test <- result_all2[result_all2$value >0.01,]
+
+sig_test$group2 <- "test"
+sig_test[sig_test$Group == "CK" |sig_test$Group == "JP" | sig_test$Group == "CL" ,]$group2 <- "Wildland"
+sig_test[sig_test$Group == "YM" | sig_test$Group == "MH" ,]$group2 <- "Farmland"
+
+for (i in c("HoS", "DL", "HD", "DR")){
+  
+  farmland_successes <- c(sig_test[sig_test$variable == i & sig_test$group2 == "Farmland", "value"]*100)
+  farmland_total <- c(100, 100)
+  
+  # 荒地组的成功次数和总样本数
+  wildland_successes <- c(sig_test[sig_test$variable == i & sig_test$group2 == "Wildland", "value"]*100)
+  wildland_total <- c(100, 100, 100)
+  
+  # 使用 prop.test 进行两组比例检验
+  result <- prop.test(c(sum(farmland_successes), sum(wildland_successes)), c(sum(farmland_total), sum(wildland_total)))
+  print(i)
+  print(result)
+}
+
+result_all2$group2 <- "test"
+result_all2[result_all2$Group == "CK" |result_all2$Group == "JP" | result_all2$Group == "CL" ,]$group2 <- "Wildland"
+result_all2[result_all2$Group == "YM" | result_all2$Group == "MH" ,]$group2 <- "Farmland"
+result_all3 <- aggregate(. ~ group2 + variable,result_all2[,2:4], FUN="mean")
+
+
+# plot
+p2_prot <- ggplot(data=result_all3,aes(x = factor(group2, levels = c("Wildland","Farmland")), y = as.numeric(value),fill = factor(variable))) +
+  geom_col(width = 0.6) +
+  geom_text(data=result_all3[result_all3$value >0.01,],aes(label=paste0(round(value*100),"%"), color=factor(variable)),
+            position = position_stack(vjust =0.5),size=3,fontface="bold") +
+  annotate("text", x=c("Wildland"), y=c(0.32), label=c("***"), size=5, color="white", fontface="bold") +
+  annotate("text", x=c("Farmland"), y=c(0.092), label=c("***"), size=5, color="black", fontface="bold") +
+  annotate("text", x=c("Farmland"), y=c(0.645), label=c("***"), size=5, color="white", fontface="bold") +
+  labs(title = "Protists", x="Habitat", y= "Community assembly process (%)") +
+
+  scale_fill_manual(values = c("#3b3b3b","#5c7cbc","#d580ec","#47ced1","#fde725"),
+                    label= c("HeS"="Heterogeneous selection",
+                             "HoS"="Homogeneous selection",
+                             "DL"="Dispersal limitation",
+                             "HD"="Homogeneous dispsersal",
+                             "DR"="Drift")) +
+  scale_color_manual(values = c("white","white","white","white","black")) +
+  theme_bw() +
+  guides(fill=guide_legend(title="Process"),
+         color="none") +
+  theme(plot.title = element_text(size=20,face = "bold",hjust = 0.5),
+        axis.title = element_text(size=15,face = "bold"),
+        axis.title.x = element_blank(),
+        axis.text = element_text(size=12,color ="black",face="bold"),
+        legend.title = element_text(size=15,face = "bold"),
+        legend.text = element_text(size=12,face = "bold"))
+
+print(p2_prot)
+
+```

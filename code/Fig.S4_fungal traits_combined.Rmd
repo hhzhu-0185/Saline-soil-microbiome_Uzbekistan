@@ -1,0 +1,212 @@
+---
+title: "Fig.S4_fungal traits_combined"
+author: "Huanhuan Zhu"
+date: "2025-02-17"
+output: html_document
+---
+
+```{r, fig.align='center',fig.height=6, fig.width=8, warning=FALSE, message=FALSE}
+
+library(tidyverse)
+library(reshape2)
+library(RColorBrewer)
+library(ggplot2)
+
+
+rm(list=ls())
+
+setwd("E:/Saline-alkali soil/Saline-alkali/amplicon/result-U/Fungi/otu/guild/")
+
+otu_all <- read.csv('../otu_fungiFlattening.csv', check.names = F, header = T)
+names(otu_all)[1] <- "OTU.ID"
+
+
+otu_all <- separate(otu_all, OTU.ID, into = c("phylum","genus"), sep = "g__")
+
+fungal_traits <- read.csv("FungalTraits 1.2_ver_16Dec_2020 - V.1.2.csv")
+
+otu_all1 <- left_join(otu_all,fungal_traits[,c("GENUS", "primary_lifestyle")], by=c("genus"="GENUS"))
+otu_all1[is.na(otu_all1$primary_lifestyle),]$primary_lifestyle <- "Unannotated"
+
+otu_all1[otu_all1$primary_lifestyle == "",]$primary_lifestyle <- "Unannotated"
+unique(otu_all1$primary_lifestyle)
+
+lifestyle_mapping <- c(
+  "ectomycorrhizal" = "Ectomycorrhizal",
+  
+  "arbuscular_mycorrhizal" = "arbuscular mycorrhizal",
+  
+  "dung_saprotroph" = "Saprotroph",
+  "litter_saprotroph" = "Saprotroph",
+  "nectar/tap_saprotroph" = "Saprotroph",
+  "pollen_saprotroph" = "Saprotroph",
+  "soil_saprotroph" = "Saprotroph",
+  "unspecified_saprotroph" = "Saprotroph",
+  "wood_saprotroph" = "Saprotroph",
+  
+  "foliar_endophyte" = "Endophyte",
+  "root_endophyte" = "Endophyte",
+  
+  "plant_pathogen" = "Plant pathogen",
+  
+  "lichen_parasite" = "Parasite",
+  "animal_parasite" ="Parasite",
+  "mycoparasite" = "Parasite",
+  
+  
+  "lichenized" = "Others",
+  "sooty_mold" = "Others",
+  "epiphyte" = "Others",
+  "unspecified_pathotroph" = "Others",
+  "animal-associated" = "Others",
+  
+  "Unannotated" = "Unannotated"
+)
+
+otu_all1$primary_lifestyle <- lifestyle_mapping[otu_all1$primary_lifestyle]
+
+fungal_traits1 <- aggregate(.~primary_lifestyle, otu_all1[,c(3:28)], FUN = "sum")
+unique(fungal_traits1$primary_lifestyle)
+
+
+# c("Algal Parasite", 
+#   "Animal Parasite", 
+#   "Animal Pathogen", 
+#   "Arbuscular Mycorrhizal", 
+#   "Dung Saprotroph", 
+#   "Ectomycorrhizal",  
+#   "Endophyte", 
+#   "Fungal Parasite",
+#   "Insect Pathogen", 
+#   "Lichen Parasite", 
+#   "Lichenized", 
+#   "Litter Saprotroph", 
+#   "Plant Pathogen", 
+#   "Plant Saprotroph", 
+#   "Pollen Saprotroph", 
+#   "Undefined Saprotroph", 
+#   "Wood Saprotroph"
+#   )
+
+fungal_traits1$sum <- rowSums(fungal_traits1[2:26])
+
+# calculate relative abundance
+my_function <- function(x)x / sum(x)
+
+fungal_traits1[, 2:26] <- apply(fungal_traits1[, 2:26], 2, my_function)
+
+
+fungal_traits1 <- fungal_traits1[order(fungal_traits1$sum, decreasing = TRUE), ]
+
+
+
+fungal_traits1_tp10 <- fungal_traits1[c(1:8), -ncol(fungal_traits1)]
+# ##################################################################################
+# # remaining taxon be classfied as Others 
+# fungal_traits1_tp10['Others', ][, 2:26] <-1 - colSums(fungal_traits1_tp10[, 2:26])
+# fungal_traits1_tp10['Others', ]$guild <- "Others"
+# 
+# 
+# 
+# if (length(fungal_traits1_tp10[, 1]) <= 10) {
+#   genus_top10 <- na.omit(fungal_traits1_tp10)
+# }  # if less than ten, remove NA
+
+
+
+m1 = brewer.pal(9, "Set1")
+m2 = brewer.pal(12, "Set3")
+
+Palette1 <-
+  c("#B2182B","#E69F00","#56B4E9","#009E73","#F0E442","#0072B2","#D55E00",
+    "#CC79A7","#CC6666","#9999CC","#66CC99","#ADD1E5")
+Palette2 <-
+  c('blue','orange','green','yellow','red','hotpink','cyan','purple',
+    'burlywood1','skyblue','#8b2578','#458b74','#f0ffff','#eeb422',
+    '#ee6aa7','#8b3a62','#cd5c5c','#ee6363','#f0e68c','#e6e6fa','#add8e6',
+    '#bfefff','#f08080','#d1eeee','#8b814c','#8b5f65')
+mix <- c(m1, Palette2, Palette1, m2)
+
+
+
+
+#set color
+# set last one as grey(others is grey)
+colour <- mix[1:nrow(fungal_traits1_tp10)]
+if (nrow(fungal_traits1_tp10) > 10) {
+  colour[length(colour)] <- 'gray'
+}
+
+
+# #########################################################
+# # make taxon name as factor,long format
+# genus_top10$Taxonomy <- factor(rownames(genus_top10), levels = rev(rownames(genus_top10)))
+# genus_ttop10 <- melt(genus_top10[, 2:27], id = 'Taxonomy')
+# 
+# # load sample_metadata, combine top10 with group information
+# group0 <- read.csv("sample_metadata.csv", header = T)
+# group <- na.omit(group0)
+# group <- group0[order(group0$sample.id), ]
+# 
+# genus_ttop10 <- merge(genus_ttop10, group, by.x = 'variable', by.y = "sample.id")
+# genus_tttop10 <<- aggregate(value ~ Taxonomy + plants,mean,data = genus_ttop10)
+# 
+# ###############################################################
+
+
+
+fungal_traits1_tp10_1 <- melt(fungal_traits1_tp10, id = 'primary_lifestyle')
+
+fungal_traits1_tp10_1$variable <- substr(fungal_traits1_tp10_1$variable,1,3)
+fungal_traits1_tp10_2 <- aggregate(.~variable+primary_lifestyle, fungal_traits1_tp10_1, FUN = "mean")
+
+
+
+
+#trait_order <- rev(c(fungal_traits1_tp10$primary_lifestyle[2:8],fungal_traits1_tp10$primary_lifestyle[1]))
+fungal_traits1_tp10_2$primary_lifestyle <- factor(fungal_traits1_tp10_2$primary_lifestyle, levels = 
+                                                    rev(c("Saprotroph", "Plant pathogen", "Parasite", "Endophyte", "Ectomycorrhizal", 
+                                                          "arbuscular mycorrhizal", "Others", "Unannotated")))
+p1 <<-
+  ggplot(fungal_traits1_tp10_2, aes(factor(variable, levels = c("CKU","JPU","CLU","MHU","YMU")), 100 * value, 
+                                    fill = primary_lifestyle)) +
+  geom_col(position = 'stack', width = 0.5)  +
+  geom_text(data=fungal_traits1_tp10_2,aes(label=ifelse(value > 0.1, paste0(round(value * 100), "%"), ""), 
+                                           color=factor(variable)),
+            position = position_stack(vjust =0.5),size=4,fontface="bold") +
+  scale_fill_manual(values =  rev(colour)) +
+  #  scale_x_continuous(breaks = seq(0, 6, 1),expand = c(0.03, 0.03)) +  # The distance between the left and right columns and the axis
+  labs(fill = "Primary lifestyle") +
+  ggtitle("FungalTraits") +
+  scale_x_discrete(labels = c(
+    'CKU' = "Bareland", 
+    'MHU' = "Cotton", 
+    'YMU' = "Maize", 
+    'JPU' = "Suaeda",
+    'CLU' = "Tamarix")) +
+  scale_y_continuous(expand = c(0, 0)) +
+
+  scale_color_manual(values = c("white","white","white","white","white","white","white","black")) +
+  labs(x = 'Plant', y = 'Relative Abundance(%)') +
+  guides(fill = guide_legend(ncol = 1),
+         color="none") +
+  theme_classic() + 
+  theme_bw() +
+  theme( 
+    panel.grid = element_blank(),
+    panel.background = element_rect(color = 'black', fill = 'transparent'),
+    strip.text = element_text(size = 15),
+    panel.spacing.x = unit(0.5, "lines"),
+    panel.spacing.y = unit(0.8, "lines"),
+    plot.title = element_text(hjust = 0.5, size = 25, face = "bold"),
+    axis.text = element_text(size = 15, color= "black", face= "bold"),
+    axis.title = element_text(size = 20, face = "bold"),
+    axis.title.x = element_blank(),
+    legend.title = element_text(hjust = 0, size = 20, face = "bold"),
+    legend.text = element_text(size = 15, face= "bold"),
+    legend.key.size = unit(0.3, "inches"), 
+    legend.background = element_blank())
+
+p1
+
+```
